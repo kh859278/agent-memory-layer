@@ -42,9 +42,14 @@ PATTERNS = [
     ("手机号", re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")),
 ]
 
-# 允许出现的"看起来像路径"的写法（示例/文档占位符）
+# 允许出现的"看起来像敏感信息"的写法：
+#   · 文档里的占位符（<you>、example.com、OWNER/repo）
+#   · GitHub 官方 noreply 邮箱与 SSH 用户：它们**设计上就是公开的**，
+#     任何 GitHub 仓库里都会合理出现（提交作者、远程地址），不该算内容泄漏。
+#     （2026-09-16 实测：加了这条之前，CI 会被自己的 ROADMAP 判红。）
 ALLOW = re.compile(r"(?:Users[\\/]+<|/home/<|/Users/<|Users[\\/]+USER|example\.com|"
-                   r"user@example|OWNER/agent-memory-layer)")
+                   r"user@example|OWNER/agent-memory-layer|"
+                   r"[\w.+-]*@users\.noreply\.github\.com|git@github\.com)")
 
 
 def load_blocklist() -> list:
