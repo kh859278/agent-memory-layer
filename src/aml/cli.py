@@ -252,6 +252,53 @@ def cmd_denoise(args):
 
 # --------------------------------------------------------------------- 解析
 
+def cmd_mcp(args):
+    """把记忆层以 MCP server 形式暴露（stdio JSON-RPC）。"""
+    from .mcp_server import serve
+    return serve(_cfg(args))
+
+
+def cmd_dedup(args):
+    cfg = _cfg(args)
+    from . import dedup
+    if args.rollback:
+        info = dedup.rollback(cfg, args.rollback)
+        print(f"已回滚：恢复 {info['restored']} 条原知识，删除 {info['removed']} 条合并条目")
+        return 0
+    result = dedup.run(cfg, apply=args.apply, sim=args.sim, title_sim=args.title_sim,
+                       show=args.show, limit=args.limit)
+    if args.apply and result.get("merged"):
+        print(f"完成：合并 {result['merged']} 簇，失败 {result['failed']} 簇；"
+              f"快照 {result.get('backup')}")
+    elif not args.apply:
+        print("（预览模式，未改动数据）")
+    return 0
+
+
+def cmd_backfill_embeddings(args):
+    cfg = _cfg(args)
+    from . import embeddings
+
+    if args.prune_orphans:
+        info = embeddings.prune_orphans(cfg, apply=args.apply)
+        if info.get("error"):
+            print(f"无法检查：{info['error']}", file=sys.stderr)
+            return 2
+        print(f"孤儿记录 {info['orphans']} 条" + (f"，已删除 {info['deleted']} 条"
+                                              if info["applied"] else "（预览，未删除）"))
+        if not args.apply:
+            return 0
+
+    def progress(done, total, ok, failed, speed):
+        print(f"   {done}/{total}  成功 {ok} 失败 {failed}  {speed:.1f} 条/秒", flush=True)
+
+    info = embeddings.backfill(cfg, apply=args.apply, limit=args.limit, progress=progress)
+    if info.get("error"):
+        print(f"无法检查：{info['error']}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aml",
                                 description="跨 agent 记忆层：采集 / 蒸馏 / 分阶段检索 / 人面镜像")
@@ -400,6 +447,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", help="配合 --ack：指定 id")
     sp.add_argument("--limit", type=int, help="brief 字数上限")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_notify(_cfg(args), args))
+
+    sp = sub.add_parser("mcp", help="起 MCP server（stdio JSON-RPC），把记忆层暴露给任何 MCP 客户端")
+    sp.set_defaults(func=cmd_mcp)
+
+    sp = sub.add_parser("dedup", help="近义知识合并（默认只预览；--apply 才真合并，可回滚）")
+    sp.add_argument("--apply", action="store_true", help="执行合并（先备份整簇，可 --rollback）")
+    sp.add_argument("--sim", type=float, default=0.16, help="正文二元组相似度阈值（默认 0.16）")
+    sp.add_argument("--title-sim", type=float, default=0.40, help="标题相似度阈值（默认 0.40）")
+    sp.add_argument("--show", type=int, default=12, help="预览几个簇")
+    sp.add_argument("--limit", type=int, default=0, help="只处理前 N 条知识（调试用）")
+    sp.add_argument("--rollback", help="回滚某个快照文件")
+    sp.set_defaults(func=cmd_dedup)
+
+    sp = sub.add_parser("backfill-embeddings",
+                        help="补齐缺向量的记录（缺向量 = 语义检索永远搜不到）")
+    sp.add_argument("--apply", action="store_true", help="真的重存（默认只预览）")
+    sp.add_argument("--limit", type=int, default=0)
+    sp.add_argument("--prune-orphans", action="store_true",
+                    help="先删掉「没有向量、但已有同内容带向量副本」的孤儿记录")
+    sp.set_defaults(func=cmd_backfill_embeddings)
     return p
 
 

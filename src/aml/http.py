@@ -88,3 +88,32 @@ class MemoryClient:
             payload["semantic_query"] = semantic_query
         r = self._request("/api/search/by-time", payload)
         return r.get("results") or []
+
+    # ---- 遍历 / 修改 / 删除（去重、导出、补向量都要用） ----
+    def list_memories(self, page: int = 1, page_size: int = 100, tag: str | None = None) -> dict:
+        from urllib.parse import quote
+        path = f"/api/memories?page={page}&page_size={page_size}"
+        if tag:
+            path += f"&tag={quote(tag)}"
+        return self._request(path, None, method="GET")
+
+    def iter_memories(self, tag: str | None = None, max_pages: int = 500):
+        """分页遍历全部（或某个标签的）记忆。"""
+        page = 1
+        while page <= max_pages:
+            data = self.list_memories(page=page, tag=tag)
+            items = data.get("memories") or data.get("results") or []
+            if not items:
+                return
+            yield from items
+            if not data.get("has_more") and len(items) < 100:
+                return
+            page += 1
+
+    def delete(self, content_hash: str) -> dict:
+        from urllib.parse import quote
+        return self._request(f"/api/memories/{quote(content_hash, safe='')}", {}, method="DELETE")
+
+    def update(self, content_hash: str, updates: dict) -> dict:
+        return self._request("/api/memories/update", {"content_hash": content_hash,
+                                                      "updates": updates})

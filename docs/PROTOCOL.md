@@ -87,10 +87,15 @@
 |---|---|---|
 | 按阶段检索 | `aml search "关键词" --phase P2` | `search(query, phase, project, tag, n)` |
 | 看未命中原因 | `aml search ... --explain` | 同上（返回文本里带诊断段） |
+| **强制重查**（跳过 10 分钟冷却） | `aml search ... --allow-repeat` | `search(..., allow_repeat: true)` |
 | 看阶段定义与预算 | `aml search --help` / 本文档 | `phase_spec(phase)` |
-| 写回知识 | 手动 `aml search` 不行——走 `aml distill` 或直接 `store` | `store(content, tags, metadata)` |
-| 结尾播报 | `aml patrol notify --brief` | `brief()` |
+| 写回知识 | `aml distill`（自动）/ 手动走 `store` | `store(content, tags, title, ktype)` |
+| 写回项目事实 | — | `store(content, project: "<名>")`（自动只打 `project:`，不进沉淀层） |
+| 结尾播报 | `aml patrol notify --brief` | `brief()` → 念完 `ack()` |
 | 体检 | `aml doctor` | `doctor()` |
+
+> **冷却的重要提醒**：同一阶段 + 同一查询在 10 分钟内不会重查。此时返回的"空"是
+> **没去查**，不是"库里没有"——工具会明确说明，需要真查时用 `allow_repeat`。
 
 ## 可直接粘贴的 prompt 片段
 

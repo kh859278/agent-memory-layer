@@ -140,6 +140,9 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
 | `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延 |
 | `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
+| `aml dedup` | 近义知识合并（默认只预览；`--apply` 才合并，**整簇快照可 `--rollback`**） |
+| `aml backfill-embeddings` | 补齐**缺向量**的记录（缺向量 = 语义检索永远搜不到），`--prune-orphans` 清重复孤儿 |
+| `aml mcp` | 起 MCP server（stdio JSON-RPC），把检索/写回/播报/体检暴露给任何 MCP 客户端 |
 | `aml patrol run` | 技能治理一轮：纳管 → 更新 → 镜像入库 → 包版本 → 写播报队列 |
 | `aml patrol check` / `update` | 比上游 commit：**干净的自动更新，本地改过的只暂存**（`--deep` 用内容指纹兜底） |
 | `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
@@ -185,6 +188,30 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 
 细节与失效模式见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)（含 mermaid 版）；
 检索协议（P0–P6 阶段表 + 可直接粘贴的 prompt 片段）见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md)。
+
+## 接 MCP 客户端（让别的 agent 直接用）
+
+`aml mcp` 是一个 **stdio MCP server**（一行一个 JSON-RPC，零额外依赖），暴露六个工具：
+
+| 工具 | 作用 |
+|---|---|
+| `search(query, phase, project, tag, n, allow_repeat)` | 分阶段检索；未命中会解释为什么空（冷却跳过 vs 真没有） |
+| `store(content, tags, title, ktype, project)` | 写回：给了 `project` 就存项目事实，否则进沉淀层（带复核期） |
+| `phase_spec(phase)` | 查某阶段的意图与预算，让 agent 自己决定给多少上下文 |
+| `brief()` / `ack()` | 取/确认「这几轮新增了什么」的 ≤100 字播报 |
+| `doctor()` | 体检摘要 |
+
+```bash
+# Claude Code
+claude mcp add aml -- aml mcp
+
+# 任何 MCP 客户端：command=aml, args=["mcp"]，传输 stdio
+# 冒烟测试（一行一条 JSON-RPC）：
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | aml mcp
+```
+
+配合 [`docs/PROTOCOL.md`](docs/PROTOCOL.md) 里的 prompt 片段，agent 就知道**什么时候**该检索、
+该要几条、查不到该怎么办。
 
 ## 设计里最重要的三个决定
 

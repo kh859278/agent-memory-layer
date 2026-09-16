@@ -153,3 +153,19 @@ def test_cooldown_prevents_duplicate_query(tmp_path):
     assert first.lines and second.empty
     assert second.diag.get("cooldown_skipped") is True
     assert client.calls == 1
+
+
+def test_cooldown_empty_result_must_not_claim_library_is_empty(tmp_path):
+    """回归：冷却跳过曾被误报成「库可能是空的」（2026-09-16 在 MCP 里实测到）。
+
+    两者是完全不同的事：一个是"我没去查"，一个是"我查了，没有"。
+    """
+    cfg = make_cfg(tmp_path)
+    client = FakeClient([(0.9, memory("一条知识", ["kind:knowledge"]))])
+    retriever = Retriever(cfg, client=client)
+    retriever.search("同一个查询", phase="P2")
+    rendered = retriever.search("同一个查询", phase="P2").render()
+    assert "没有真的去查" in rendered
+    assert "allow-repeat" in rendered
+    assert "库可能是空的" not in rendered
+    assert retriever.search("同一个查询", phase="P2", allow_repeat=True).lines

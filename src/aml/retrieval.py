@@ -44,6 +44,13 @@ class Result:
 
     def _why_empty(self) -> str:
         d = self.diag
+        # 冷却跳过 ≠ 没命中。两者必须分清，否则调用方会以为"库里没有"而重复踩坑
+        # （2026-09-16 实测：MCP 里查同一个词返回 0 条，解释却写着"库可能是空的"——是假话）
+        if d.get("cooldown_skipped"):
+            return ("（本次**没有真的去查**：同一阶段 + 同一查询在冷却期内，默认 10 分钟不重查）\n"
+                    "· 这是「防重复」机制，不代表库里没有\n"
+                    "· 要强制重查：CLI 加 `--allow-repeat`（MCP 传 `allow_repeat: true`）\n"
+                    "· 换个措辞通常更好 —— 不同措辞会命中不同条目")
         lines = ["（没命中。下面说明为什么，避免把「没查到」当成「没有」）"]
         if d.get("service_down"):
             lines.append("· 记忆服务不可达 —— 不是没有记录，是查不了：先起服务")
