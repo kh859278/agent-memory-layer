@@ -298,6 +298,16 @@ ruff check src tests tools      # lint
 python tools/scrub_check.py     # 提交前查内容泄漏（CI 也会跑）
 ```
 
+**改代码前请再跑一遍 3.9**（最低支持版本）。CI 的 3.9 矩阵抓到过 `Path.write_text(newline=)`
+（3.10+ 才有）这类问题——本地只有 3.12 时永远看不见：
+
+```bash
+uv venv --python 3.9 .venv39 && uv pip install --python .venv39/bin/python -e ".[dev]" zstandard
+.venv39/bin/python -m pytest -q          # Windows 把 bin/ 换成 Scripts/
+```
+
+跨平台行为（路径分隔符、时钟粒度、换行符）也请在 CI 矩阵上确认，别只在本地一个系统上过。
+
 想新增一个 agent 适配器：在 `src/aml/adapters/` 加一个模块，实现 `discover()`（找出会话文件）
 与 `turns()`（产出 `Turn`），然后在 `adapters/__init__.py` 注册一行，并补一个用合成数据的测试。
 
