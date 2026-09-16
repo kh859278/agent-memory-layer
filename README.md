@@ -50,9 +50,57 @@ aml search --phase P2 "powershell 编码"
 | `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
 | `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延 |
 | `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
+| `aml patrol sync` | 技能入库：把活技能目录镜像进知识库 + 重建技能清单（`--ingest` 再灌向量库） |
+| `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
+| `aml patrol check` / `update` | 比上游 commit：**干净的自动更新，本地改过的只暂存**（`--deep` 用内容指纹兜底） |
+| `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份） |
+| `aml patrol packages` | 包版本监控（只监控不升级，附 release notes 摘要） |
+| `aml patrol notify --brief` | 取一句 ≤100 字的「这次新增/更新了什么」（没变化则空输出） |
+| `aml patrol run` | 定时任务调这个：纳管 → 更新 → 镜像入库 → 包版本 → 写播报队列 |
 
 底层记忆服务用 [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service)
 （HTTP + MCP，SQLite + sqlite-vec + 本地嵌入），任何 MCP 客户端都能接。
+
+## 技能治理（`aml patrol`）
+
+如果你装了很多 skill（尤其是从 GitHub 上抄来的），迟早会遇到三件事：
+不知道哪些过时了、不知道哪些被自己改过、更新时怕把改动冲掉。`patrol` 就是治这个的。
+
+**三条安全闸门**（这是设计里最重要的一条）：
+
+| 情况 | 处理 |
+|---|---|
+| 元数据里有 `local_patch`（明确标注过"我改过"） | **永不覆盖**，上游新版只暂存到 `state/patrol/_pending/` |
+| `local_diff: true`，或本地内容指纹 ≠ 记录（本地被动过） | **不覆盖**，只暂存 + 播报提醒 |
+| 本地干净 | 备份到 `state/patrol/_backup/` → 覆盖 → 更新元数据 |
+
+**上游探测按代价分三层**（本机实战：GitHub 时通时断，API 匿名限流 60 次/小时）：
+
+1. `git ls-remote`（~2 秒/仓库，**不吃限流**）——注意要加 `-c http.sslBackend=openssl`，
+   否则受限环境会报 `schannel: AcquireCredentialsHandle failed`（不是网络问题）
+2. GitHub API `/commits/{branch}`（git 失败时兜底）
+3. 内容指纹（`--deep`）：下 tarball 比 `upstream_hash`；默认不开，因为有的仓库有几 MB
+
+**结尾播报**：`patrol` 把"这次新增/更新了什么"写进通知队列，agent 在回答结尾取一句话念出来：
+
+```bash
+aml patrol notify --brief     # 有变化才输出，形如：📌 技能自动更新 2 个（tdd、grilling）
+aml patrol notify --ack --all # 确认已经念给用户了，才标记（避免通知被静默吞掉）
+```
+
+想让 agent 每次都自动播报，把这条规则写进你的 agent 规则文件（如 `AGENTS.md`）：
+「每次回答结尾执行 `aml patrol notify --brief`，有输出就贴最后一行，贴完 `--ack`」。
+
+**定时跑**（每天一次就够）：
+
+```bash
+# Linux/macOS（crontab -e）
+30 9 * * *  aml patrol run >> ~/.cache/aml-patrol.log 2>&1
+
+# Windows（计划任务，隐藏窗口）
+schtasks /Create /TN "aml-patrol" /SC DAILY /ST 09:30 ^
+  /TR "cmd /c aml patrol run >> %LOCALAPPDATA%\aml-patrol.log 2>&1"
+```
 
 ## 隐私
 
@@ -75,10 +123,11 @@ src/aml/
 ├─ distill.py       会话 → 跨项目知识（LLM 提炼 + 可读 markdown 落盘）
 ├─ maintenance.py   备份 / 恢复 / 导出 / 复核 / 降噪
 ├─ doctor.py        体检
+├─ patrol_cli.py    `aml patrol` 子命令实现
+├─ patrol/          技能治理：github 探测 / skills 指纹与镜像 / update 三条安全闸门
+│                   / packages 包版本监控 / notify 播报队列
 └─ cli.py           命令行入口
 ```
-
-> 技能治理（上游版本监控 + 安全更新 + 自动入库）在原系统里已跑通，尚未搬进本仓库，见 `ROADMAP.md`。
 
 ## 许可证
 

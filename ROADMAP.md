@@ -36,12 +36,17 @@
 
 ### 还没搬过来的（下一步）
 
-- [ ] `patrol`：技能治理（上游 commit 探测 + 三条安全闸门 + 入库 + ≤100 字结尾播报）
+- [x] **`patrol` 技能治理**：`aml patrol sync / adopt / check / update / accept / packages / notify / run`
+      —— 镜像入库 + 重建清单、上游 commit 探测（git ls-remote → API → 内容指纹三层）、
+      **三条安全闸门**（本地补丁与本地改动永不覆盖，只暂存）、包版本监控（只监控不升级）、
+      ≤100 字结尾播报队列。本机实测：`patrol check` 认出 28 个受跟踪技能全部最新；
+      `patrol sync` 重建清单（46 个技能 / 跟踪 28 / 本地补丁 1），与旧系统数字一致
 - [ ] MCP server：把 `search` / `distill` 暴露给任何 MCP 客户端
 - [ ] `embedding backfill`：补齐缺失向量的记录（缺失 = 永远搜不到）
 - [ ] `dedup`：近义知识合并（带回滚）—— 现在只有 `denoise`（噪声），没有去重
 - [ ] 可选适配器：Codex CLI / Copilot Chat / Cursor（本机实测这三家当前没有可用会话数据）
 - [ ] `watch` 的守护自愈（原系统用 VBS + `watch-forever.ps1` 保持常驻；跨平台方案待定）
+- [ ] 技能清单的差异视图（`patrol diff`：把"上游改了什么"直接摆出来，而不只是暂存）
 
 ## Step 3 差异化（发布后要打的牌）
 

@@ -342,6 +342,64 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("denoise", help="降噪：找出界面回显/纯确认语（默认只预览）")
     sp.add_argument("--apply", action="store_true", help="执行软删除（deleted_at，可回滚）")
     sp.set_defaults(func=cmd_denoise)
+
+    # ---- 技能治理（patrol）----
+    from . import patrol_cli
+
+    pp = sub.add_parser("patrol", help="技能治理：入库 / 上游版本监控与自动更新 / 结尾播报")
+    psub = pp.add_subparsers(dest="patrol_cmd", required=True)
+
+    sp = psub.add_parser("run", help="定时任务调这个：纳管→更新→镜像入库→包版本→播报")
+    sp.add_argument("--no-adopt", action="store_true", help="跳过纳管（省流量）")
+    sp.add_argument("--no-sync", action="store_true", help="更新后不同步知识库")
+    sp.add_argument("--no-notify", action="store_true", help="不写播报队列")
+    sp.add_argument("--deep", action="store_true", help="拿不到 sha 也下快照比内容（慢）")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_run(_cfg(args), args))
+
+    sp = psub.add_parser("sync", help="技能入库：镜像进知识库 + 重建技能清单")
+    sp.add_argument("--ingest", action="store_true", help="同时增量灌进向量库")
+    sp.add_argument("--force", action="store_true", help="忽略 60 秒内重复灌库的保护")
+    sp.add_argument("--no-delete", action="store_true", help="只增改，不删知识库里的多余文件")
+    sp.add_argument("--dry-run", action="store_true", help="只报告差异")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_sync(_cfg(args), args))
+
+    sp = psub.add_parser("adopt", help="给没有元数据的技能补上游来源（目录名命中 >=3 个才认仓库）")
+    sp.add_argument("--apply", choices=["none", "no-local-only", "all"], default="none",
+                    help="纳管时是否用上游覆盖本地（默认只暂存）")
+    sp.add_argument("--repos", help="逗号分隔，覆盖候选仓库")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_adopt(_cfg(args), args))
+
+    sp = psub.add_parser("check", help="只看有没有上游更新（不动任何文件）")
+    sp.add_argument("--deep", action="store_true")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_check(_cfg(args), args))
+
+    sp = psub.add_parser("update", help="检查并自动更新（有本地改动/补丁的只暂存）")
+    sp.add_argument("--deep", action="store_true")
+    sp.add_argument("--no-sync", action="store_true")
+    sp.add_argument("--no-notify", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_update(_cfg(args), args))
+
+    sp = psub.add_parser("accept", help="采纳暂存的上游版本（覆盖本地，先备份）")
+    sp.add_argument("name", nargs="?", help="技能名")
+    sp.add_argument("--all", action="store_true", help="全部采纳")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_accept(_cfg(args), args))
+
+    sp = psub.add_parser("packages", help="包版本监控（只监控不升级）")
+    sp.add_argument("--dry-run", action="store_true", help="只打印，不写报告与播报")
+    sp.add_argument("--no-notify", action="store_true")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_packages(_cfg(args), args))
+
+    sp = psub.add_parser("notify", help="播报队列：--brief 取一句 ≤100 字 / --ack 标记已播报")
+    sp.add_argument("--brief", action="store_true", help="打印未播报的一句话（无内容则空输出）")
+    sp.add_argument("--ack", action="store_true", help="标记已播报")
+    sp.add_argument("--all", action="store_true", help="配合 --ack：全部标记")
+    sp.add_argument("--id", help="配合 --ack：指定 id")
+    sp.add_argument("--limit", type=int, help="brief 字数上限")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_notify(_cfg(args), args))
     return p
 
 

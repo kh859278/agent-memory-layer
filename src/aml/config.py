@@ -82,8 +82,23 @@ DEFAULTS: dict = {
     },
     "patrol": {
         "enabled": True,
+        # 结尾播报的字数上限（agent 每次回答结尾念一句，不超过这个长度）
         "notify_max_chars": 100,
-        "candidate_repos": ["mattpocock/skills", "alchaincyf/huashu-skills"],
+        # 哪些目录是"活的技能目录"，镜像到知识库的哪里（不存在就自动跳过）
+        "skill_roots": [
+            {"name": "agents-skills", "path": "~/.agents/skills", "mirror_to": "技能原始/skills-shared"},
+            {"name": "claude-code-skills", "path": "~/.claude/skills",
+             "mirror_to": "技能原始/claude-code-skills"},
+        ],
+        # 知识库里只读的历史快照（参与清单生成，不镜像）
+        "snapshot_dirs": ["openclaw-skills", "skills-wsl", "huashu-skills"],
+        # 兜底找上游时用的候选仓库（目录名命中 >= min_repo_hits 个才认）
+        "candidate_repos": ["mattpocock/skills"],
+        "min_repo_hits": 3,
+        "inventory_relpath": "技能/技能清单.md",
+        # 要监控版本的 npm 包（默认空：这是给"你自己在用的工具"留的钩子）
+        "packages": [],
+        "update": {"keep_backups": 10, "tarball_max_mb": 40},
     },
 }
 
