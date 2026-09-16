@@ -1,0 +1,13 @@
+# 统一换行符：仓库里存 LF，检出到 Windows 时脚本类用 CRLF（Windows 工具链更省心）
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.vbs text eol=crlf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.db binary
