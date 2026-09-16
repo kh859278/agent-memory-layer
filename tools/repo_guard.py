@@ -224,8 +224,8 @@ def main(argv=None) -> int:
         if args.dry_run:
             print("  （--dry-run：不提交）")
             return 0
-        git("commit", "-F", args.message_file)
         before = git("rev-parse", "HEAD")
+        git("commit", "-F", args.message_file)
         push = subprocess.run(["git", "push"], cwd=ROOT, capture_output=True, text=True,
                               encoding="utf-8", errors="replace")
         if push.returncode != 0:
