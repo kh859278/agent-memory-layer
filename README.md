@@ -30,9 +30,26 @@
 pipx install agent-memory-layer
 aml init                      # 生成 $AML_HOME/config.yaml，检测本机有哪些 agent
 aml doctor                    # 一条命令体检：服务、索引新鲜度、embedding 覆盖、阈值自测
-aml sync                      # 采集增量入库
+aml sync                      # 采集增量入库（首次想从零开始：先 aml watch --seed 记基线）
 aml search --phase P2 "powershell 编码"
 ```
+
+## 命令一览
+
+| 命令 | 作用 |
+|---|---|
+| `aml init` | 建数据目录骨架 + `config.yaml`（并探测本机能看到的 agent 会话） |
+| `aml doctor` | 体检：目录 / 服务 / 向量覆盖 / FTS / **索引新鲜度** / 适配器 / 检索自测，每项带修法 |
+| `aml sync` | 采集所有 agent 会话入库 + **把 created_at 回填成原始时间**（`--dry-run` 只看） |
+| `aml watch` | 常驻监听：DSH 归档即时入库、其他 agent 会话静默 ≥120s 后增量入库（`--seed` 记基线） |
+| `aml distill` | 把会话蒸馏成跨项目知识（`kind:knowledge` + `domain:*`），并落可读 markdown |
+| `aml search QUERY --phase P2` | 分阶段检索：级联回退 + 未命中解释（`--explain` 看诊断） |
+| `aml ingest-kb` | 知识库文档分块灌库（`--since` 增量） |
+| `aml index rebuild` | 重建知识库索引（索引会腐化，体检会告警） |
+| `aml backup` / `aml restore` | 在线备份（按天保留）/ **从备份恢复**（默认预检，`--yes` 才写，且先自动备份现有库） |
+| `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
+| `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延 |
+| `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
 
 底层记忆服务用 [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service)
 （HTTP + MCP，SQLite + sqlite-vec + 本地嵌入），任何 MCP 客户端都能接。
@@ -49,16 +66,19 @@ CI 里有一个内容泄漏扫描（`tools/scrub_check.py`）当守门。
 src/aml/
 ├─ config.py        配置解析（AML_HOME / config.yaml / 环境变量 / 命令行）
 ├─ http.py          记忆服务客户端（重试、超时、批量）
+├─ text.py          截断 / 降噪判定 / 项目名归一 / 时间戳归一
 ├─ adapters/        agent 会话格式适配器：dsh / claude_code / kimi
 ├─ ingest.py        会话 → 记忆层（去重、降噪、时间戳回填）
 ├─ watch.py         常驻监听：归档触发 / 文件静默触发
 ├─ kb.py            知识库文档入库 + 索引重建
 ├─ retrieval.py     分阶段检索（级联回退 + 诊断 + 预算）
-├─ distill.py       会话 → 跨项目知识（LLM）
-├─ maintenance.py   备份 / 恢复 / 导出 / 降噪 / 去重 / 复核
+├─ distill.py       会话 → 跨项目知识（LLM 提炼 + 可读 markdown 落盘）
+├─ maintenance.py   备份 / 恢复 / 导出 / 复核 / 降噪
 ├─ doctor.py        体检
-└─ patrol/          技能治理（上游版本监控 + 安全更新 + 入库）
+└─ cli.py           命令行入口
 ```
+
+> 技能治理（上游版本监控 + 安全更新 + 自动入库）在原系统里已跑通，尚未搬进本仓库，见 `ROADMAP.md`。
 
 ## 许可证
 

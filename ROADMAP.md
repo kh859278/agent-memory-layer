@@ -12,25 +12,36 @@
 
 ## Step 2 可安装可验证
 
-- [x] `aml` CLI：`init` / `doctor` / `sync` / `search` / `index`
+- [x] `aml` CLI：`init` / `doctor` / `sync` / `watch` / `distill` / `search` / `ingest-kb` / `index`
+      / `backup` / `restore` / `export` / `review` / `denoise`
 - [x] **体检** `aml doctor`：目录、服务、向量覆盖、FTS、**索引新鲜度（比对索引自报数 vs 库内数）**、
       各 adapter 能否看到会话、泛词检索自测 —— 每项都带"怎么修"
 - [x] **合并检索栈**：`kb_lookup` 的阶段预算 + `recall_plus` 的级联回退合成 `retrieval.py`
       （0.80→0.72→0.65→FTS5→LIKE，未命中必须解释为什么空）
-- [x] pytest 17 个测试（合成 fixture，不含真实会话）+ `ruff` 全绿
-- [x] GitHub Actions：3 系统 × 2 Python 版本跑 lint+test，外加**内容泄漏扫描**独立 job
+- [x] **`aml backup` / `aml restore`**：在线备份 + 恢复前预检（integrity_check + 条数）
+      + 恢复前自动另存现有库 —— **补上了原系统"只有备份没有恢复"的缺口**
+      （顺带修掉一个真 bug：同一秒内连续备份会互相覆盖，现在文件名带微秒）
+- [x] `aml export`：导出成人可读 markdown（按领域分组）/ 原始 JSON
+- [x] `aml watch`：常驻监听（DSH 归档即时入库 / 会话静默 ≥stable 秒增量入库），
+      状态存 `state/watch_state.json`；蒸不蒸按 agent 分开（kimi 只入库、子代理不蒸、DSH 要求 ≥3 轮）
+- [x] `aml distill`：会话 → 跨项目知识（`kind:knowledge`+`domain:*`、复核期、互斥锁、
+      增量重蒸门槛、逐会话落盘、输入截断防"吃光输出预算返回空"）
+- [x] `aml review` / `aml denoise`（软删除可回滚）/ `aml ingest-kb`（`--since` 增量）
+- [x] pytest **35 个测试**（合成 fixture，含备份↔恢复往返、坏备份拒收、队列增量重蒸、监听冷却判定）
+- [x] `ruff` 全绿；GitHub Actions：3 系统 × 2 Python 版本跑 lint+test，外加**内容泄漏扫描**独立 job
 - [x] `tools/scrub_check.py`：绝对路径 / 凭据 / 邮箱 / 手机号 / 自定义屏蔽词；默认只扫"会被提交的文件"
-- [x] 本机对着线上数据验证：`doctor` 13 项 0 失败、分阶段检索命中跨项目沉淀、`sync --dry-run` 采到 4627 条
+- [x] 本机对着线上数据验证：`doctor` 13 项 0 失败、检索命中跨项目沉淀、`sync --dry-run` 采到 4627 条、
+      `backup` 真实备份 68.3 MB / 9720 条并 integrity ok、`export` 导出 9720 条（沉淀 482 / 146 领域）、
+      `watch --seed --dry-run` 看到 223 个会话文件与 49 个已归档会话
 
 ### 还没搬过来的（下一步）
 
-- [ ] `watch`：常驻监听（DSH 归档即时入库 / 其他 agent 文件静默 ≥120s 增量入库）+ 守护自愈
-- [ ] `distill`：会话 → 跨项目知识（LLM 提炼、`kind:knowledge` + `domain:*` 分层、复核期、互斥锁、队列兜底）
-- [ ] `maintenance`：`backup` / **`restore`（现在缺的就是这个）** / `export` / `denoise` / `dedup` / `review`
-- [ ] `kb ingest`：文档分块灌库的 CLI 入口（`kb.ingest_docs` 已写好，缺 CLI）
 - [ ] `patrol`：技能治理（上游 commit 探测 + 三条安全闸门 + 入库 + ≤100 字结尾播报）
-- [ ] MCP server：把 `search` / `distill` / `distill_session` 暴露给任何 MCP 客户端
+- [ ] MCP server：把 `search` / `distill` 暴露给任何 MCP 客户端
 - [ ] `embedding backfill`：补齐缺失向量的记录（缺失 = 永远搜不到）
+- [ ] `dedup`：近义知识合并（带回滚）—— 现在只有 `denoise`（噪声），没有去重
+- [ ] 可选适配器：Codex CLI / Copilot Chat / Cursor（本机实测这三家当前没有可用会话数据）
+- [ ] `watch` 的守护自愈（原系统用 VBS + `watch-forever.ps1` 保持常驻；跨平台方案待定）
 
 ## Step 3 差异化（发布后要打的牌）
 
