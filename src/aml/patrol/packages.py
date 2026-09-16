@@ -29,24 +29,25 @@ def semver_key(version: str) -> tuple:
             STAGE_ORDER.get(m.group(4) or "", 0), int(m.group(5) or 0))
 
 
-def registry(pkg: str) -> dict:
-    """取包元数据。
+def registry(pkg: str, base: str = "", deadline: float = 30) -> dict:
+    """取包元数据（带墙钟截止）。
 
-    关键是 `Accept: application/vnd.npm.install-v1+json`（npm 的"精简元数据"格式）：
-    完整 manifest 会带上每个版本的完整 package.json，包大时是几 MB ——
-    本机国际带宽实测 ~27 KB/s，取一次要 **171 秒**（踩过）。
-    精简格式只有 dist-tags / 版本号 / 依赖，体积小一个数量级，够用。
+    两个踩过的坑：
+      · registry.npmjs.org 从本机**被拖住**：131 KB 花了 181 秒（~0.8 KB/s）。
+        国内镜像 registry.npmmirror.com 同样内容 21 秒。所以 registry 可配置：
+        `patrol.npm_registry`。
+      · 只靠 urllib 的 timeout 挡不住这种"缓慢滴流"，必须用墙钟截止（见 github.get_bytes）。
     """
     quoted = pkg.replace("/", "%2F")
-    data = github._get(f"https://registry.npmjs.org/{quoted}", timeout=30,
-                       headers={"User-Agent": "aml-patrol",
-                                "Accept": "application/vnd.npm.install-v1+json"})
+    root = (base or "https://registry.npmjs.org").rstrip("/")
+    data = github.get_bytes(f"{root}/{quoted}", deadline=deadline,
+                            headers={"User-Agent": "aml-patrol",
+                                     "Accept": "application/vnd.npm.install-v1+json"})
     try:
         return json.loads(data)
     except ValueError:
-        # 极少数情况下服务端不认精简格式：退回完整格式（慢，但不会挂）
-        data = github._get(f"https://registry.npmjs.org/{quoted}", timeout=60,
-                           headers={"User-Agent": "aml-patrol"})
+        data = github.get_bytes(f"{root}/{quoted}", deadline=deadline,
+                                headers={"User-Agent": "aml-patrol"})
         return json.loads(data)
 
 
@@ -88,18 +89,20 @@ def summarize_notes(body: str, limit: int = 70) -> str:
     return text[: limit - 1] + "…" if len(text) > limit else text
 
 
-def _manifest(pkg: str, version: str) -> dict:
+def _manifest(pkg: str, version: str, base: str = "", deadline: float = 20) -> dict:
     try:
-        return registry(f"{pkg}/{version}").get("dependencies") or {}
+        return registry(f"{pkg}/{version}", base=base, deadline=deadline).get("dependencies") or {}
     except Exception:  # noqa: BLE001
         return {}
 
 
-def manifest_delta(pkg: str, old_version: str, new_version: str) -> str:
+def manifest_delta(pkg: str, old_version: str, new_version: str,
+                   base: str = "", deadline: float = 20) -> str:
     """新旧版本 package.json 的依赖差异（拿不到 release notes 时的兜底）。"""
     if not old_version or not new_version:
         return ""
-    old, new = _manifest(pkg, old_version), _manifest(pkg, new_version)
+    old = _manifest(pkg, old_version, base, deadline)
+    new = _manifest(pkg, new_version, base, deadline)
     if not old or not new:
         return ""
     added = sorted(set(new) - set(old))
@@ -132,11 +135,13 @@ def check(cfg, log=print, write: bool = True) -> dict:
             continue
         channel = spec.get("channel", "latest")
         t0 = time.time()
+        base = patrol.get("npm_registry") or ""
+        deadline = float(patrol.get("package_deadline_sec", 30) or 30)
         try:
-            reg = registry(pkg)
+            reg = registry(pkg, base=base, deadline=deadline)
         except Exception as e:  # noqa: BLE001
-            log(f"  {pkg}：registry 取不到（{type(e).__name__} {str(e)[:60]}）")
-            out[pkg] = {"error": f"{type(e).__name__} {str(e)[:80]}"}
+            log(f"  {pkg}：registry 取不到（{type(e).__name__} {str(e)[:60]}） [{time.time()-t0:.1f}s]")
+            out[pkg] = {"error": f"{type(e).__name__} {str(e)[:80]}", "action": "unavailable"}
             continue
         tags = reg.get("dist-tags") or {}
         target = tags.get(channel) or tags.get("latest")
@@ -152,7 +157,7 @@ def check(cfg, log=print, write: bool = True) -> dict:
                                      spec.get("release_tag_prefix", "")) \
             if spec.get("releases_repo") else None
         summary = summarize_notes((notes or {}).get("body", ""), 70)
-        delta = manifest_delta(pkg, current, target)
+        delta = manifest_delta(pkg, current, target, base, deadline)
         info.update({"action": "notify", "notes_url": (notes or {}).get("url", ""),
                      "summary": "；".join(x for x in (summary, delta) if x)
                      or "未取到 release notes / 依赖差异，请人工查看"})

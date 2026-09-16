@@ -233,7 +233,7 @@ def test_packages_check_notifies_only_when_newer(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_registry(name):
+    def fake_registry(name, base="", deadline=0):
         calls["n"] += 1
         if calls["n"] == 1:
             return {"dist-tags": {"latest": "1.1.0"}, "versions": {"1.1.0": {}}, "time": {}}
@@ -256,6 +256,7 @@ def test_packages_check_silent_when_current(tmp_path, monkeypatch):
     installed_dir.mkdir(parents=True)
     (installed_dir / "package.json").write_text(json.dumps({"version": "1.1.0"}), encoding="utf-8")
     monkeypatch.setattr(packages, "registry",
-                        lambda name: {"dist-tags": {"latest": "1.1.0"}, "versions": {}, "time": {}})
+                        lambda name, base="", deadline=0: {"dist-tags": {"latest": "1.1.0"},
+                                                           "versions": {}, "time": {}})
     result = packages.check(cfg, log=lambda *_: None)
     assert result["@demo/cli"]["action"] == "none"

@@ -32,8 +32,39 @@ def _get(url: str, timeout: int = 30, headers: dict | None = None):
         return f.read()
 
 
-def api_json(url: str, timeout: int = 30) -> dict:
-    return json.loads(_get(url, timeout=timeout))
+def get_bytes(url: str, deadline: float = 20, headers: dict | None = None, timeout: int = 15):
+    """带**墙钟截止**的下载。
+
+    为什么不能只靠 urllib 的 timeout：它是"单次 socket 操作"的超时，
+    遇到"缓慢滴流"的连接（每几秒来一点字节）永远不触发 ——
+    实测 npm registry 131 KB 拖了 181 秒。这里用工作线程 + join(deadline) 硬截止。
+    """
+    import threading
+    box = {}
+
+    def work():
+        try:
+            box["data"] = _get(url, timeout=timeout, headers=headers)
+        except Exception as e:  # noqa: BLE001
+            box["error"] = e
+
+    thread = threading.Thread(target=work, daemon=True)
+    thread.start()
+    thread.join(deadline)
+    if thread.is_alive():
+        raise TimeoutError(f"超过 {deadline:.0f}s 未完成（连接被拖住，已放弃）")
+    if "error" in box:
+        raise box["error"]
+    return box["data"]
+
+
+def api_json(url: str, timeout: int = 30, deadline: float = 20) -> dict:
+    """GitHub API：同样要墙钟截止。
+
+    踩过的坑：`timeout` 只管单次 socket 操作，遇到"缓慢滴流"的连接（每几秒来一点字节）
+    永远不触发——实测单个仓库的 API 探测拖了 301 秒，把整轮预算都吃光了。
+    """
+    return json.loads(get_bytes(url, deadline=deadline, timeout=timeout, headers=UA))
 
 
 # --------------------------------------------------------------------- sha
