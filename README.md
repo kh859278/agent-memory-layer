@@ -325,6 +325,18 @@ ruff check src tests tools      # lint
 python tools/scrub_check.py     # 提交前查内容泄漏（CI 也会跑）
 ```
 
+**提交统一走守门器**（多个 agent 会话共用同一个工作目录时的安全阀，详见 [`AGENTS.md`](AGENTS.md)）：
+
+```bash
+python tools/repo_guard.py --status                                   # 先看状态
+printf 'fix: ...\n' > msg.txt
+python tools/repo_guard.py --message-file msg.txt --paths src/aml/x.py tests/test_x.py
+```
+
+它加锁串行化（`.git/repo_guard.lock`）、`git fetch` 对表（落后/分叉就拒绝）、
+**拒绝 `git add -A`**（必须显式列路径，且暂存区要先为空）、跑测试与 lint 与泄漏扫描，最后提交推送。
+不是自己改的文件：写交接单 `python tools/repo_guard.py --handoff "改了什么" --paths <文件>`，把提交留给主控。
+
 **改代码前请再跑一遍 3.9**（最低支持版本）。CI 的 3.9 矩阵抓到过 `Path.write_text(newline=)`
 （3.10+ 才有）这类问题——本地只有 3.12 时永远看不见：
 
