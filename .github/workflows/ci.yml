@@ -27,18 +27,25 @@ jobs:
       - name: Lint (ruff)
         run: ruff check src tests tools
       - name: Tests (pytest)
-        run: pytest -q --tb=short 2>&1 | tee pytest.log
+        # 显式用 bash：Windows runner 默认是 PowerShell，管道的退出码语义不同，
+        # 会导致"测试挂了但步骤判成功"或反之（同一个 workflow 三系统行为必须一致）
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -q --tb=short 2>&1 | tee pytest.log
       - name: Publish failure details
-        # 免 token 也能从 check-run 的 output.summary 读到失败详情（GitHub Actions 日志要鉴权）
+        # GitHub Actions 的日志要鉴权才能读；annotation 是免 token 可读的，
+        # 而 CI 的 3.9/Windows 失败在本地很难复现——所以把失败尾巴转成 annotation。
         if: failure()
         shell: bash
         run: |
-          {
-            echo "### pytest on ${{ matrix.os }} / py${{ matrix.python-version }}"
-            echo '```text'
-            tail -n 60 pytest.log 2>/dev/null || echo "(no pytest.log)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f pytest.log ]; then
+            tail -n 40 pytest.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          else
+            echo "::error::没有 pytest.log —— 失败发生在 Install/Lint 步骤，不是测试本身"
+          fi
 
   scrub:
     # 内容泄漏扫描：这个仓库从一台在用的机器上抽取，绝不能让本机路径/客户名/密钥进仓库

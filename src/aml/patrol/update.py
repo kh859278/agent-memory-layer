@@ -263,21 +263,38 @@ def check(cfg, log=print, check_only: bool = False, deep: bool = False) -> tuple
             shutil.rmtree(scratch, ignore_errors=True)
 
     # git 安装的：只尝试快进拉取（有本地提交会自动失败，是安全的）
+    pull_timeout = int(update_cfg.get("git_pull_timeout_sec", 60) or 60)
+
+    def head_of(path):
+        try:
+            return subprocess.run(["git", "-C", path, "rev-parse", "HEAD"], capture_output=True,
+                                  text=True, timeout=20).stdout.strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
     for name, local_dir, _meta, _mpath in gits:
         if check_only:
             details.append(f"- ℹ️ **{name}**（git 安装）：仅检查模式跳过")
             continue
         env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="")
+        before = head_of(local_dir)
         try:
             r = subprocess.run(["git", "-c", "http.sslBackend=openssl", "-C", local_dir,
                                 "pull", "--ff-only"], capture_output=True, text=True,
-                               timeout=180, env=env)
-            if r.returncode == 0:
+                               timeout=pull_timeout, env=env)
+            after = head_of(local_dir)
+            # 注意：`git pull` 在"Already up to date."时也返回 0 —— 只看返回码会把没变化
+            # 误报成"已更新"（每轮假播报，实测踩过）。必须比 HEAD 有没有变。
+            if r.returncode == 0 and before and after and before != after:
                 results["updated"].append(name)
-                details.append(f"- ⬆️ **{name}**（git）：已快进")
+                details.append(f"- ⬆️ **{name}**（git）：已快进 {before[:7]} → {after[:7]}")
             else:
                 results["uptodate"].append(name)
-                details.append(f"- ℹ️ **{name}**（git）：无需更新或拉不动")
+                details.append(f"- ✅ **{name}**（git）：已是最新"
+                               if r.returncode == 0 else f"- ℹ️ **{name}**（git）：拉不动")
+        except subprocess.TimeoutExpired:
+            results["unknown"].append(name)
+            details.append(f"- ⚠️ **{name}**（git）：拉取超 {pull_timeout}s，本轮跳过（下轮重试）")
         except Exception as e:  # noqa: BLE001
             results["uptodate"].append(name)
             details.append(f"- ℹ️ **{name}**（git）：{type(e).__name__}")

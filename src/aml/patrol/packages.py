@@ -105,11 +105,19 @@ def check(cfg, log=print, write: bool = True) -> dict:
     """检查配置里所有包。返回 {包名: {installed, target, action, summary}}。"""
     patrol = cfg.section("patrol")
     out = {}
+    import time
+    budget = float(patrol.get("packages_budget_sec", 60) or 60)
+    started = time.time()
     for spec in patrol.get("packages") or []:
         pkg = spec.get("name")
         if not pkg:
             continue
+        if time.time() - started > budget:
+            log(f"  ⏱ 包监控已用 {time.time() - started:.0f}s，超预算 {budget:.0f}s，跳过剩余包（下轮再查）")
+            out[pkg] = {"action": "skipped", "reason": "超预算"}
+            continue
         channel = spec.get("channel", "latest")
+        t0 = time.time()
         try:
             reg = registry(pkg)
         except Exception as e:  # noqa: BLE001
@@ -123,7 +131,7 @@ def check(cfg, log=print, write: bool = True) -> dict:
         info = {"installed": found, "current": current, "channel": channel, "target": target,
                 "dist_tags": tags, "action": "none", "summary": ""}
         if not target or (current and semver_key(target) <= semver_key(current)):
-            log(f"  {pkg}：已是最新（本机 {current or '未找到'}，{channel} {target}）")
+            log(f"  {pkg}：已是最新（本机 {current or '未找到'}，{channel} {target}） [{time.time() - t0:.1f}s]")
             out[pkg] = info
             continue
         notes = github.release_notes(spec.get("releases_repo", ""), target,
@@ -134,7 +142,7 @@ def check(cfg, log=print, write: bool = True) -> dict:
         info.update({"action": "notify", "notes_url": (notes or {}).get("url", ""),
                      "summary": "；".join(x for x in (summary, delta) if x)
                      or "未取到 release notes / 依赖差异，请人工查看"})
-        log(f"  {pkg}：有新版本 {target}（本机 {current}）—— {info['summary']}")
+        log(f"  {pkg}：有新版本 {target}（本机 {current}）—— {info['summary']} [{time.time() - t0:.1f}s]")
         out[pkg] = info
 
     if write:

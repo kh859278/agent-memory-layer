@@ -153,9 +153,13 @@ def cmd_patrol_run(cfg, args, log=print) -> int:
     failures = []
 
     def phase(title, fn, *a, **kw):
+        import time
+        started = time.time()
         log(title)
         try:
-            return fn(*a, **kw)
+            result = fn(*a, **kw)
+            log(f"  ⏱ {title.strip('= ')} 用时 {time.time() - started:.1f}s")
+            return result
         except Exception as e:  # noqa: BLE001
             failures.append(f"{title.strip('= ')}: {type(e).__name__} {str(e)[:80]}")
             log(f"  ⚠ 本阶段失败（不中断整轮）：{type(e).__name__} {str(e)[:120]}")
