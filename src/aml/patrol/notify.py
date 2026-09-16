@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import uuid
 
 
 class NoticeQueue:
@@ -41,9 +42,11 @@ class NoticeQueue:
 
     # ---- 写 ----
     def add(self, kind: str, text: str, detail: str = "") -> str:
-        # id 带微秒：同一秒内连加两条不会撞 id（否则 --ack --id 会把两条一起标记掉）
+        # id 必须**真的唯一**：Windows 的系统时钟粒度约 15.6ms，
+        # 同一 tick 内连加两条会拿到相同的毫秒 → id 撞车 → `--ack --id` 一次标记掉两条
+        # （CI 的 windows-latest 就是这么红的，2026-09-16）。所以补一段随机后缀。
         now = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
-        notice_id = f"{now}-{kind}"
+        notice_id = f"{now}-{kind}-{uuid.uuid4().hex[:4]}"
         self.data["pending"].append({"id": notice_id, "kind": kind, "ts": now, "text": text.strip(),
                                      "detail": detail, "notified": False, "notified_at": None})
         self.save()

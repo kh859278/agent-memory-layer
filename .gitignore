@@ -42,3 +42,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 各种临时 venv（CI 复现用）
+.venv*/
+venv*/

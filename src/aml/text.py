@@ -46,10 +46,16 @@ def now_iso() -> str:
 
 
 def project_of(cwd) -> str:
-    """工作目录 → 项目名（标签用，避免特殊字符）。"""
+    """工作目录 → 项目名（标签用，避免特殊字符）。
+
+    必须同时按 `\\` 和 `/` 切：会话里记的 cwd 可能是 Windows 路径，
+    而程序跑在 Linux/macOS 上（CI 就这样），只用 os.path.basename 会得到
+    `C-work-proj-a` 这种整串（2026-09-16 CI 抓到）。
+    """
     if not cwd:
         return "unknown"
-    base = os.path.basename(str(cwd).rstrip("\\/")) or "root"
+    parts = [p for p in re.split(r"[\\/]+", str(cwd).rstrip("\\/")) if p]
+    base = parts[-1] if parts else "root"
     return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "-", base)[:40]
 
 
