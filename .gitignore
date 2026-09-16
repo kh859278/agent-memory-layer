@@ -1,0 +1,44 @@
+# ---- 用户内容：永不入库 ----
+# 数据主目录（如果你把 AML_HOME 指到仓库里，这些规则兜底）
+knowledge/
+knowledge-*/
+state/
+state-*/
+backups/
+vault/
+沉淀/
+索引.md
+*.local.yaml
+config.yaml
+*.credentials*
+.env
+.env.*
+
+# ---- 运行期产物 ----
+logs/
+*.log
+*.tmp
+*.lock
+_lookups/
+cache/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
