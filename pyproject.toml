@@ -30,8 +30,9 @@ dev = ["pytest>=7", "ruff>=0.5"]
 mcp = ["mcp>=1.0"]
 
 [project.urls]
-Homepage = "https://github.com/OWNER/agent-memory-layer"
-Issues = "https://github.com/OWNER/agent-memory-layer/issues"
+Homepage = "https://github.com/kh859278/agent-memory-layer"
+Repository = "https://github.com/kh859278/agent-memory-layer"
+Issues = "https://github.com/kh859278/agent-memory-layer/issues"
 
 [project.scripts]
 aml = "aml.cli:main"
