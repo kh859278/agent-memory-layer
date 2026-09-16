@@ -19,6 +19,7 @@ import time
 import urllib.request
 
 from .http import MemoryClient
+from .text import write_lf
 
 PROMPT = """下面是某个项目的**一段真实工作会话记录**（按时间排序，U=用户任务，A=agent 回复）。
 
@@ -356,5 +357,6 @@ def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
                       f" ｜ 来源：{meta.get('src_session', '-')}",
                       f"- 线索：{meta.get('evidence', '-')}", "",
                       (m.get("content") or "").strip(), ""]
-        (sink / f"{domain}.md").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        # 用 write_lf 而不是 Path.write_text(newline=...) —— 后者是 Python 3.10+ 才有的参数
+        write_lf(sink / f"{domain}.md", "\n".join(lines) + "\n")
     return {"domains": len(by_domain), "entries": len(items), "dir": str(sink)}

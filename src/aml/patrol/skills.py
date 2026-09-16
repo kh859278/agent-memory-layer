@@ -1,4 +1,4 @@
-﻿"""技能目录的通用操作：指纹、比较、元数据、备份/暂存、镜像、清单生成。
+"""技能目录的通用操作：指纹、比较、元数据、备份/暂存、镜像、清单生成。
 
 几个关键约定（都是从实战里定下来的，改之前先看原因）：
 
@@ -18,6 +18,8 @@ import hashlib
 import json
 import os
 import shutil
+
+from ..text import write_lf
 
 META_NAMES = (".skill-meta.json", ".huashu-skill-meta.json", "source.json")
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".mypy_cache", ".pytest_cache", ".venv"}
@@ -379,6 +381,7 @@ def write_inventory(cfg, skills: list | None = None) -> dict:
     inventory = cfg.knowledge_dir / str(cfg.section("patrol").get("inventory_relpath")
                                         or "技能/技能清单.md")
     inventory.parent.mkdir(parents=True, exist_ok=True)
-    inventory.write_text("\n".join(out_lines) + "\n", encoding="utf-8", newline="\n")
+    # write_lf 而不是 Path.write_text(newline=...) —— newline 参数是 Python 3.10+ 才有的
+    write_lf(inventory, "\n".join(out_lines) + "\n")
     return {"total": len(order), "tracked": len(tracked), "patched": len(patched),
             "snapshot_only": len(snapshot_only), "inventory": str(inventory)}

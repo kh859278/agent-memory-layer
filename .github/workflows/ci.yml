@@ -11,6 +11,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 3.9 是最低支持版本，必须跑：3.10+ 才有的 API（例如 Path.write_text(newline=)）
+        # 在本地 3.12 上永远看不出来，只有这里会红。
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.9", "3.12"]
     steps:
@@ -25,7 +27,18 @@ jobs:
       - name: Lint (ruff)
         run: ruff check src tests tools
       - name: Tests (pytest)
-        run: pytest -q
+        run: pytest -q --tb=short 2>&1 | tee pytest.log
+      - name: Publish failure details
+        # 免 token 也能从 check-run 的 output.summary 读到失败详情（GitHub Actions 日志要鉴权）
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### pytest on ${{ matrix.os }} / py${{ matrix.python-version }}"
+            echo '```text'
+            tail -n 60 pytest.log 2>/dev/null || echo "(no pytest.log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   scrub:
     # 内容泄漏扫描：这个仓库从一台在用的机器上抽取，绝不能让本机路径/客户名/密钥进仓库
@@ -37,3 +50,14 @@ jobs:
           python-version: "3.12"
       - name: Content leak scan
         run: python tools/scrub_check.py
+
+  py39-compat:
+    # 静态兜底：拿 3.9 编译一遍源码，抓"本地 3.12 看不出来"的语法/API 误用
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Compile all sources under 3.9
+        run: python -m compileall -q src tools

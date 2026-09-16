@@ -98,7 +98,16 @@ DEFAULTS: dict = {
         "inventory_relpath": "技能/技能清单.md",
         # 要监控版本的 npm 包（默认空：这是给"你自己在用的工具"留的钩子）
         "packages": [],
-        "update": {"keep_backups": 10, "tarball_max_mb": 40},
+        "update": {
+            "keep_backups": 10,
+            "tarball_max_mb": 40,
+            # 单仓库 git 探测超时（秒）。别设大：本机 github 时通时断，
+            # 25s × 重试 2 次 = 每仓库 50s，5 个仓库能把一轮拖过 4 分钟（实测踩过）。
+            "git_timeout_sec": 15,
+            # 整轮"探测上游"的时间预算（秒）：超了就停止探测剩余仓库，
+            # 记「本轮未判断」下轮重试 —— 定时任务宁可少查一轮，也不能被网络抖动拖成几分钟。
+            "detect_budget_sec": 120,
+        },
     },
 }
 

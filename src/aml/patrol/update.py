@@ -1,4 +1,4 @@
-﻿"""技能上游纳管与更新（监控 + 自动更新 + 暂存复核）。
+"""技能上游纳管与更新（监控 + 自动更新 + 暂存复核）。
 
 自动更新的**三条安全闸门**（这是整个模块存在的理由：别把用户的本地改动冲掉）：
 
@@ -164,13 +164,30 @@ def update_one(cfg, name, local_dir, meta, mpath, up_dir, sha) -> tuple:
 
 
 def check(cfg, log=print, check_only: bool = False, deep: bool = False) -> tuple:
-    """探测 + 需要时更新。返回 (结果字典, 明细行)。"""
+    """探测 + 需要时更新。返回 (结果字典, 明细行)。
+
+    有**总时间预算**（`patrol.update.detect_budget_sec`，默认 120 秒）：
+    github 抖动时 git 会一个个挂到超时，不加预算的话一轮能被拖到几分钟（实测踩过）。
+    超预算后剩余仓库记「本轮未判断」，下轮再试——定时任务宁可少查一轮。
+    """
+    import time
+    update_cfg = cfg.section("patrol").get("update", {}) or {}
+    budget = float(update_cfg.get("detect_budget_sec", 120) or 120)
+    git_timeout = int(update_cfg.get("git_timeout_sec", 15) or 15)
+    started = time.time()
     groups, gits = group_by_repo(cfg)
     results, details = _blank(), []
     for (repo, branch), items in sorted(groups.items(), key=lambda kv: str(kv[0])):
+        if time.time() - started > budget:
+            log(f"  ⏱ 探测已用 {time.time() - started:.0f}s，超预算 {budget:.0f}s，"
+                f"剩余仓库本轮不判断（下轮重试）")
+            for name, *_ in items:
+                results["unknown"].append(name)
+                details.append(f"- ⚠️ **{name}**：探测超预算，本轮未判断")
+            continue
         sha, via = None, "-"
         try:
-            sha, via = github.remote_sha(repo, branch)
+            sha, via = github.remote_sha(repo, branch, git_timeout=git_timeout)
         except Exception as e:  # noqa: BLE001
             log(f"  {repo}@{branch} 远端 sha 取不到：{str(e)[:70]}")
 

@@ -38,8 +38,13 @@ def api_json(url: str, timeout: int = 30) -> dict:
 
 # --------------------------------------------------------------------- sha
 
-def ls_remote(repo: str, branch: str | None = None, timeout: int = 25, tries: int = 2) -> str:
-    """git ls-remote 取远端 sha。凭证类错误不重试（重试也没用）。"""
+def ls_remote(repo: str, branch: str | None = None, timeout: int = 15, tries: int = 1) -> str:
+    """git ls-remote 取远端 sha。
+
+    超时默认 15 秒、只试 1 次：本机 github 时通时断，**重试一个"挂住"的连接没有意义**，
+    只会把每仓库代价从 15s 变成 50s（5 个仓库 = 4 分钟以上，实测踩过）。
+    失败就让调用方退到 GitHub API（另一条传输路径，常常反而不挂）。凭证类错误也不重试。
+    """
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="")
     ref = f"refs/heads/{branch}" if branch else "HEAD"
     cmd = ["git", "-c", "http.sslBackend=openssl", "ls-remote",
@@ -61,10 +66,10 @@ def ls_remote(repo: str, branch: str | None = None, timeout: int = 25, tries: in
     raise RuntimeError(last)
 
 
-def remote_sha(repo: str, branch: str | None = None) -> tuple:
-    """返回 (sha, 途径)。先 git，失败退 API。"""
+def remote_sha(repo: str, branch: str | None = None, git_timeout: int = 15) -> tuple:
+    """返回 (sha, 途径)。先 git，失败退 API（另一条传输路径）。"""
     try:
-        return ls_remote(repo, branch), "git"
+        return ls_remote(repo, branch, timeout=git_timeout), "git"
     except Exception as git_error:  # noqa: BLE001
         try:
             url = (f"https://api.github.com/repos/{repo}/commits/{branch}" if branch
