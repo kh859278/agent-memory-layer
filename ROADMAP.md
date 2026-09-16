@@ -58,9 +58,12 @@
 
 ## 发布前 checklist
 
-- [ ] `pyproject.toml` 里 `OWNER` 占位符换成真实 GitHub 用户名
-- [ ] 决定仓库名（当前 `agent-memory-layer`）与许可（当前 MIT；若在意专利授权可换 Apache-2.0）
-- [ ] git 身份：本仓库当前是占位 `your-name <you@example.com>`，改成你自己的
+- [x] `pyproject.toml` 里 `OWNER` 占位符换成真实 GitHub 用户名（kh859278）
+- [x] 决定仓库名（`agent-memory-layer`）与许可（MIT）
+- [x] git 身份：5 笔提交作者已改为 `jk <293333882+kh859278@users.noreply.github.com>`（内容零变化，tree 校验一致）
+- [x] 已推送到 GitHub：`git@github.com:kh859278/agent-memory-layer.git`（SSH，无需 token）
+- [x] README 重写：徽章 + 真实体检/检索输出 + 同类对照 + 诚实安装说明（PyPI 未发布）+ 开发入口
+- [x] 写清与上游 `mcp-memory-service` 的关系（我们是它的"采集 + 蒸馏 + 阶段检索 + 技能治理"上层）
 - [ ] 跑一遍 `python tools/scrub_check.py --all` 确认连被忽略的文件里也没有内容
-- [ ] README 补架构图与一段 30 秒演示（`aml doctor` → `aml search`）
-- [ ] 想清楚怎么描述与上游 `mcp-memory-service` 的关系（我们是它的"采集+蒸馏+阶段检索"上层）
+- [ ] 仓库 description 与 topics（`ai-agents` `memory` `mcp` `claude-code` `knowledge-base`）—— 网页 10 秒或 API
+- [ ] README 补架构图（可选）
