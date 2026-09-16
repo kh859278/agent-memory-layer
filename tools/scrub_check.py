@@ -33,10 +33,12 @@ SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".
 
 PATTERNS = [
     ("绝对路径(Windows 用户目录)", re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s\"']+")),
-    # 注意：应用目录里也常出现 "home/sessions" 这类片段（如 kimi-code/home/sessions），
-    # 所以用否定前瞻排除几个已知的"不是用户家目录"的段（2026-09-16 被自己的文档判红过两次）
+    # 注意：应用目录与占位账号名里也常出现 "home/xxx"（kimi-code/home/sessions、
+    # /home/user/... 这类示例），所以用否定前瞻排除这些"不是真实用户家目录"的段。
+    # 这条规则被自己的文档与测试判红过三次（2026-09-16），改动请连同自测一起跑。
     ("绝对路径(Unix 家目录)",
-     re.compile(r"/(?:home|Users)/(?!(?:sessions|shared|runner|vscode|app|data)/)[A-Za-z0-9._-]+/")),
+     re.compile(r"/(?:home|Users)/(?!(?:sessions|shared|runner|vscode|app|data|user|username|you|yourname)/)"
+                r"[A-Za-z0-9._-]+/")),
     ("疑似 API key", re.compile(r"\b(?:sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|"
                                 r"AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b")),
     ("疑似硬编码密钥赋值", re.compile(r"(?i)\b(?:api[_-]?key|secret|password|token)\s*[:=]\s*"

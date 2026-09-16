@@ -71,7 +71,6 @@ def write_lf(path, content: str) -> None:
     为什么不用 `Path.write_text(..., newline="\\n")`：**`newline` 参数是 Python 3.10 才加的**，
     在 3.9 上会 `TypeError`（CI 的 3.9 矩阵就是这么红的，2026-09-16 复现）。
     """
-    import os
     directory = os.path.dirname(str(path))
     if directory:
         os.makedirs(directory, exist_ok=True)
