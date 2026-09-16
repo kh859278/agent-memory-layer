@@ -404,6 +404,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from .text import ensure_utf8_stdio
+    ensure_utf8_stdio()      # 中文 Windows 上不这么做，doctor 打印 emoji/中文会 UnicodeEncodeError
     args = build_parser().parse_args(argv)
     return args.func(args)
 

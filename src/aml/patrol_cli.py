@@ -107,15 +107,19 @@ def cmd_patrol_accept(cfg, args, log=print) -> int:
 
 
 def cmd_patrol_packages(cfg, args, log=print) -> int:
-    result = packages.check(cfg, log=log, write=not args.dry_run)
-    if not args.no_notify and not args.dry_run:
+    # 这个函数既被 `aml patrol packages` 调，也被 `aml patrol run` 调；
+    # 两个子命令的参数集不同，所以一律用 getattr 取默认值（踩过 AttributeError）。
+    dry_run = getattr(args, "dry_run", False)
+    no_notify = getattr(args, "no_notify", False)
+    result = packages.check(cfg, log=log, write=not dry_run)
+    if not no_notify and not dry_run:
         queue = NoticeQueue(cfg)
         for pkg, info in result.items():
             if info.get("action") == "notify":
                 queue.add("packages", f"{pkg} 有新版 {info['target']}"
                                       f"（本机 {info['current']}）：{info['summary'][:60]}",
                           detail=f"升级是手动动作：{info.get('notes_url', '')}")
-    if args.json:
+    if getattr(args, "json", False):
         print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
@@ -136,39 +140,54 @@ def cmd_patrol_notify(cfg, args, log=print) -> int:
 
 
 def cmd_patrol_run(cfg, args, log=print) -> int:
-    """定时任务调这个：纳管（可选）→ 检查/更新 → 镜像入库 → 包版本 → 播报。"""
+    """定时任务调这个：纳管（可选）→ 检查/更新 → 镜像入库 → 包版本 → 播报。
+
+    每个阶段单独兜异常：**一轮里某个阶段失败（网络抖、某个仓库挂了）不该把整轮搞黄**，
+    否则连"镜像 + 播报"这种跟网络无关的事也做不成了。
+    """
     patrol = _patrol(cfg)
     if not patrol.get("enabled", True):
         log("patrol 在配置里被禁用（patrol.enabled=false）")
         return 0
+
+    failures = []
+
+    def phase(title, fn, *a, **kw):
+        log(title)
+        try:
+            return fn(*a, **kw)
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"{title.strip('= ')}: {type(e).__name__} {str(e)[:80]}")
+            log(f"  ⚠ 本阶段失败（不中断整轮）：{type(e).__name__} {str(e)[:120]}")
+            return None
 
     stamp = cfg.state_dir / "patrol" / "last_adopt.txt"
     need_adopt = not stamp.is_file()
     if stamp.is_file():
         import datetime as dt
         need_adopt = (dt.datetime.now() - dt.datetime.fromtimestamp(stamp.stat().st_mtime)).days >= 7
-    if need_adopt and not args.no_adopt:
-        log("=== 1/4 纳管新技能（每周最多一次）===")
-        update.adopt(cfg, log=log)
+    if need_adopt and not getattr(args, "no_adopt", False):
+        phase("=== 1/4 纳管新技能（每周最多一次）===", update.adopt, cfg, log=log)
         stamp.parent.mkdir(parents=True, exist_ok=True)
         stamp.write_text(dt_now(), encoding="utf-8")
     else:
         log("=== 1/4 纳管：7 天内跑过，跳过 ===")
 
-    log("=== 2/4 技能监控 + 自动更新 ===")
-    cmd_patrol_update(cfg, args, log=log)
+    phase("=== 2/4 技能监控 + 自动更新 ===", cmd_patrol_update, cfg, args, log=log)
 
-    log("=== 3/4 知识库镜像 + 清单 ===")
-    report = skills.mirror(cfg)
-    for label, info in report.items():
-        log(f"  {label}: +{info['added_or_updated']} / -{info['removed']}")
-    log(f"  {skills.write_inventory(cfg)}")
+    def _mirror():
+        report = skills.mirror(cfg)
+        for label, info in report.items():
+            log(f"  {label}: +{info['added_or_updated']} / -{info['removed']}")
+        log(f"  {skills.write_inventory(cfg)}")
 
-    log("=== 4/4 包版本监控 ===")
-    cmd_patrol_packages(cfg, args, log=log)
+    phase("=== 3/4 知识库镜像 + 清单 ===", _mirror)
+    phase("=== 4/4 包版本监控 ===", cmd_patrol_packages, cfg, args, log=log)
 
     brief = NoticeQueue(cfg).brief()
     log(f"本轮播报内容：{brief or '（无变化）'}")
+    if failures:
+        log(f"本轮有 {len(failures)} 个阶段失败：{'；'.join(failures)}")
     return 0
 
 

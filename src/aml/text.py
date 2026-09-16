@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+import sys
 
 # 界面回显 / 系统噪声 / 纯确认语：这些进了库只会挤占检索预算
 UI_NOISE = re.compile(
@@ -56,3 +57,18 @@ def skip_path(path: str, parts) -> bool:
     """路径里含指定片段就跳过（默认挡 .dsh 内部目录与 node_modules）。"""
     p = str(path).replace("/", "\\").lower()
     return any(str(x).lower() in p for x in (parts or []))
+
+
+def ensure_utf8_stdio() -> None:
+    """把 stdout/stderr 强制成 UTF-8。
+
+    为什么需要：中文 Windows 上 Python 默认按 GBK 编码 stdout，而 CLI 会打印中文与
+    ✅/⚠️/❌ 这类字符，直接 `UnicodeEncodeError: 'gbk' codec can't encode character` 崩掉——
+    而且崩在**全新安装后的第一条命令**（`aml doctor`）上，是最难看的位置。
+    只在可执行入口调用，不在库导入时动全局状态。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - 老版本 Python 或被重定向的流
+            pass

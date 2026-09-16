@@ -69,17 +69,47 @@ $ aml search "内存快照比对" --phase P3
 · 可换招：① 换措辞 ② 放宽 -n ③ 用 --tag domain:xxx 收窄 ④ aml recall --grep 关键词
 ```
 
-## 安装
+## 一键安装
+
+**Windows（PowerShell）**
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.ps1 | iex"
+```
+
+**macOS / Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.sh | sh
+```
+
+脚本只做四件事，每步都打印在做什么：检查 Python ≥3.9 与 git → 装 `aml` 命令行
+（优先 `uv`，其次 `pipx`，最后 `pip --user`）→ 可选装上本地后端 `mcp-memory-service`
+→ `aml init` + `aml doctor`。**幂等**（装过就跳过）、不需要管理员、不改系统目录。
+
+想先看一眼再跑（推荐，尤其是 `| sh` 这种形式）：
+
+```powershell
+irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.ps1 -OutFile install.ps1; notepad install.ps1; .\install.ps1
+```
+
+常用开关：`-DryRun`（只看会执行什么）/ `-Upgrade` / `-NoBackend` / `-NoInit`
+（`sh install.sh --dry-run --upgrade --no-backend --no-init`）。
+
+### 只想装 CLI 本体（自己管后端）
 
 ```bash
-# 从源码装（PyPI 未发布）
-pipx install "git+https://github.com/kh859278/agent-memory-layer.git"
-# 或开发模式
+uv tool install "git+https://github.com/kh859278/agent-memory-layer.git"     # 或
+pipx install "git+https://github.com/kh859278/agent-memory-layer.git"        # 或
+pip install "git+https://github.com/kh859278/agent-memory-layer.git"
+```
+
+开发模式：
+
+```bash
 git clone https://github.com/kh859278/agent-memory-layer.git && cd agent-memory-layer
 pip install -e ".[dev]"
-
-# 初始化：建数据目录 + config.yaml，并探测本机能看到的 agent 会话
-aml init
+aml init                      # 建数据目录 + config.yaml，并探测本机能看到的 agent 会话
 ```
 
 ### 依赖一个本地记忆服务
