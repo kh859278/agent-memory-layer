@@ -240,12 +240,16 @@ def review_due(cfg, within_days: int = 0) -> list:
 
 
 def postpone(cfg, content_hash: str, days: int = 180) -> dict:
-    """复核无误：把复核期往后顺延。"""
+    """复核无误：把复核期往后顺延。
+
+    走 `client.update()`（`PUT /api/memories/{hash}`）—— 曾经的写法是
+    `POST /api/memories/update`，那是 **405**（端点是 PUT，body 只收 tags/memory_type/metadata）。
+    这个错因为没人真跑过 `--postpone` 而藏了很久（2026-09-17 用 OpenAPI 核对后修掉）。
+    """
     client = MemoryClient(cfg.api)
     new_date = (dt.date.today() + dt.timedelta(days=days)).isoformat()
     try:
-        res = client._request("/api/memories/update", {"content_hash": content_hash,
-                                                       "updates": {"metadata": {"review_after": new_date}}})
+        res = client.update(content_hash, {"metadata": {"review_after": new_date}})
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__} {e}"}
     return {"ok": True, "hash": content_hash, "review_after": new_date, "response": res}

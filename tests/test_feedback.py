@@ -20,6 +20,7 @@ class FakeClient:
     def __init__(self, memories):
         self.memories = {m["content_hash"]: dict(m) for m in memories}
         self.updated = []
+        self.rated = []
         self.search_hits = []
 
     # 反馈用
@@ -36,6 +37,10 @@ class FakeClient:
         self.updated.append((content_hash, updates))
         meta = self.memories[content_hash].setdefault("metadata", {})
         meta.update(updates.get("metadata") or {})
+        return {"success": True}
+
+    def rate(self, content_hash, rating, feedback=""):
+        self.rated.append((content_hash, rating, feedback))
         return {"success": True}
 
     # 检索用
@@ -76,8 +81,9 @@ def test_record_increments_counters(tmp_path):
     meta = info["meta"]
     assert meta["usage_count"] == 1 and meta["success_count"] == 1
     assert meta["last_used_at"] and meta["last_note"] == "救场了"
-    assert meta["failure_count"] if "failure_count" in meta else True
     assert client.updated[0][0] == "h1"
+    # 同时打服务的原生质量评分（rating: worked→1 / used→0 / failed→-1）
+    assert client.rated == [("h1", 1, "救场了")]
 
 
 def test_record_failed_sets_failure_fields(tmp_path):

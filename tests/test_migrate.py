@@ -1,10 +1,10 @@
-"""存量迁移测试：程序性内容的双重判据 + 迁移/回滚（假 client，不联网）。
+"""存量迁移测试：程序性内容的双重判据 + 原地改标签 + 回滚（假 client，不联网）。
 
-重点：
-  · `is_procedure()` 必须**两个判据都认**——新数据靠 `kind:procedure` 标签，
-    历史数据靠 `kb:<程序性目录>`（存量没迁移时也不漏）
-  · 迁移是"重存 + 删旧"（服务的 content_hash 把标签算进去了），必须先写快照、可回滚
-  · 预览模式绝不写任何东西
+关键教训（写进测试，防止改回去）：
+  · 迁移**不能**用"重存 + 删旧"：服务按逐字内容判重 → `Duplicate content detected`，
+    带 conversation_id 也只绕过语义去重（本机 2804 条全失败）
+  · 正确做法是 `PUT /api/memories/{hash}` 原地改 tags：不重嵌入、hash 不变、可回滚
+  · `is_procedure()` 必须**两个判据都认**（标签 + 来源目录），否则存量没迁移就漏
 """
 from __future__ import annotations
 
@@ -15,24 +15,30 @@ sys.path.insert(0, __file__.rsplit("tests", 1)[0] + "src")
 
 from aml import config as cfgmod  # noqa: E402
 from aml import migrate  # noqa: E402
+from aml.http import MemoryClient  # noqa: E402
 
 
 class FakeClient:
     def __init__(self, memories):
         self.memories = list(memories)
+        self.updated = []
         self.stored = []
         self.deleted = []
 
     def iter_memories(self, tag=None, max_pages=500):
         return list(self.memories)
 
-    def store(self, content, tags=None, metadata=None, conversation_id=None):
-        self.stored.append({"content": content, "tags": list(tags or []),
-                            "metadata": metadata, "conversation_id": conversation_id})
-        return {"success": True, "content_hash": f"new-{len(self.stored)}"}
+    def update(self, content_hash, updates):
+        self.updated.append((content_hash, updates))
+        return {"success": True}
 
-    def delete(self, content_hash):
-        self.deleted.append(content_hash)
+    # 下面两个**不该被调用**（迁移只走原地更新），留着是为了让"用错方法"直接暴露
+    def store(self, *a, **kw):
+        self.stored.append((a, kw))
+        return {"success": True}
+
+    def delete(self, *a, **kw):
+        self.deleted.append(a)
         return {"success": True}
 
 
@@ -57,7 +63,7 @@ def test_is_procedure_accepts_tag_or_source_dir(tmp_path):
     knowledge = memory("正文", ["kind:knowledge", "domain:tooling"], "h3")
 
     assert migrate.is_procedure(tagged, dirs) is True
-    assert migrate.is_procedure(legacy, dirs) is True   # ← 这条是"存量不漏"的关键
+    assert migrate.is_procedure(legacy, dirs) is True   # ← "存量不漏"的关键
     assert migrate.is_procedure(knowledge, dirs) is False
 
 
@@ -72,26 +78,29 @@ def test_plan_counts_only_legacy_records(tmp_path):
     ])
     info = migrate.plan(cfg, client=client)
     assert info["total"] == 2 and info["tagged"] == 1 and info["pending"] == 1
-    assert info["hashes"] == ["h1"]
+    assert [r["content_hash"] for r in info["records"]] == ["h1"]
+    assert info["records"][0]["tags"] == ["kb:技能原始"]
 
 
-def test_apply_restores_tags_and_deletes_old(tmp_path):
+def test_apply_updates_tags_in_place(tmp_path):
     cfg = make_cfg(tmp_path)
-    legacy = memory("技能正文", ["kb:技能原始", "knowledge-base"], "old-1")
-    client = FakeClient([legacy, memory("别的知识", ["kind:knowledge"], "k1")])
+    client = FakeClient([
+        memory("技能正文", ["kb:技能原始", "knowledge-base"], "h1"),
+        memory("别的知识", ["kind:knowledge"], "k1"),
+    ])
 
     info = migrate.apply(cfg, client=client, log=lambda *_: None)
     assert info["migrated"] == 1 and info["failed"] == 0
 
-    saved = client.stored[0]
-    assert "kind:procedure" in saved["tags"] and "authority:procedure" in saved["tags"]
-    assert saved["content"] == "技能正文"
-    assert saved["conversation_id"].startswith("migrate:procedure:")
-    assert client.deleted == ["old-1"]                 # 旧记录必须删掉（否则留无标签孤儿）
+    hashes = [h for h, _ in client.updated]
+    assert hashes == ["h1"]                            # 只动该动的
+    tags = client.updated[0][1]["tags"]
+    assert "kind:procedure" in tags and "authority:procedure" in tags
+    assert "kb:技能原始" in tags                        # 原有标签不丢
+    assert client.stored == [] and client.deleted == []  # 绝不用重存/删旧
 
     snapshot = json.loads(open(info["snapshot"], encoding="utf-8").read())
-    assert snapshot["moved"][0]["content_hash"] == "old-1"
-    assert snapshot["created"] == ["new-1"]
+    assert snapshot["moved"][0] == {"content_hash": "h1", "tags": ["kb:技能原始", "knowledge-base"]}
 
 
 def test_apply_skips_when_nothing_pending(tmp_path):
@@ -99,25 +108,51 @@ def test_apply_skips_when_nothing_pending(tmp_path):
     client = FakeClient([memory("a", ["kb:技能原始", "kind:procedure"], "h1")])
     info = migrate.apply(cfg, client=client, log=lambda *_: None)
     assert info["migrated"] == 0 and info["snapshot"] is None
-    assert client.stored == [] and client.deleted == []
+    assert client.updated == []
 
 
-def test_rollback_restores_originals_and_removes_tagged(tmp_path):
+def test_rollback_writes_original_tags_back(tmp_path):
     cfg = make_cfg(tmp_path)
-    client = FakeClient([memory("技能正文", ["kb:技能原始"], "old-1")])
+    client = FakeClient([memory("技能正文", ["kb:技能原始"], "h1")])
     info = migrate.apply(cfg, client=client, log=lambda *_: None)
 
-    client.stored.clear()
-    client.deleted.clear()
+    client.updated.clear()
     result = migrate.rollback(cfg, info["snapshot"], client=client, log=lambda *_: None)
-    assert result["restored"] == 1 and result["removed"] == 1
-    restored = client.stored[0]
-    assert restored["tags"] == ["kb:技能原始"]          # 原样恢复（没被加上新标签）
-    assert client.deleted == ["new-1"]                 # 删掉带标签那版
+    assert result["restored"] == 1
+    assert client.updated[0] == ("h1", {"tags": ["kb:技能原始"]})   # 原样写回，没有新标签
 
 
 def test_limit_stops_early(tmp_path):
     cfg = make_cfg(tmp_path)
     client = FakeClient([memory(f"正文 {i}", ["kb:技能原始"], f"h{i}") for i in range(5)])
     info = migrate.plan(cfg, client=client, limit=2)
-    assert info["pending"] == 2 and len(info["hashes"]) == 2
+    assert info["pending"] == 2 and len(info["records"]) == 2
+
+
+# ------------------------------------------------- 客户端方法本身（端点是踩过的坑）
+
+def test_client_update_uses_put_and_drops_unknown_fields(monkeypatch):
+    calls = []
+
+    def fake_request(path, payload=None, method="POST"):
+        calls.append((method, path, payload))
+        return {"success": True}
+
+    client = MemoryClient("http://x")
+    monkeypatch.setattr(client, "_request", fake_request)
+    client.update("abc123", {"tags": ["t"], "metadata": {"a": 1}, "content": "不该被接受"})
+    method, path, payload = calls[0]
+    assert method == "PUT"
+    assert path.endswith("/api/memories/abc123")
+    assert "content" not in payload                   # 端点只接受 tags/memory_type/metadata
+
+
+def test_client_rate_calls_native_quality_endpoint(monkeypatch):
+    calls = []
+    client = MemoryClient("http://x")
+    monkeypatch.setattr(client, "_request",
+                        lambda path, payload=None, method="POST": calls.append((path, payload)) or {})
+    client.rate("abc123", 1, feedback="救场了")
+    path, payload = calls[0]
+    assert path.endswith("/api/quality/memories/abc123/rate")
+    assert payload == {"rating": 1, "feedback": "救场了"}

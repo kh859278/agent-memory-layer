@@ -120,5 +120,19 @@ class MemoryClient:
         return self._request(f"/api/memories/{quote(content_hash, safe='')}", {}, method="DELETE")
 
     def update(self, content_hash: str, updates: dict) -> dict:
-        return self._request("/api/memories/update", {"content_hash": content_hash,
-                                                      "updates": updates})
+        """原地更新一条记忆（tags / memory_type / metadata）。
+
+        正确端点是 `PUT /api/memories/{content_hash}`（body 只接受这三个字段）。
+        曾经的写法是 `POST /api/memories/update` —— **405 Method Not Allowed**，
+        而且因为没人真跑过 `review --postpone`，这个错藏了很久（2026-09-17 用 OpenAPI 核对后修掉）。
+        """
+        from urllib.parse import quote
+        payload = {k: v for k, v in (updates or {}).items()
+                   if k in ("tags", "memory_type", "metadata")}
+        return self._request(f"/api/memories/{quote(content_hash, safe='')}", payload, method="PUT")
+
+    def rate(self, content_hash: str, rating: int, feedback: str = "") -> dict:
+        """服务的**原生质量评分**（rating ∈ -1/0/1）。用它可以让 Dashboard 的 Analytics 也反映反馈。"""
+        from urllib.parse import quote
+        return self._request(f"/api/quality/memories/{quote(content_hash, safe='')}/rate",
+                             {"rating": rating, "feedback": feedback[:500]})

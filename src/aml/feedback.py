@@ -98,10 +98,18 @@ def record(cfg, content_hash: str, outcome: str, note: str = "", client: MemoryC
 
     response = client.update(content_hash, {"metadata": meta})
     ok = bool(response.get("success", True))
+    # 同时打服务的**原生质量评分**（Dashboard 的 Analytics 也看得到）：
+    # metadata 计数用于排序（检索结果里直接读到），原生 rating 用于服务的质量视图。
+    native = None
+    rating = {"worked": 1, "used": 0, "failed": -1}[outcome]
+    try:
+        native = client.rate(content_hash, rating, feedback=note or outcome)
+    except Exception as e:  # noqa: BLE001 - 后端版本不同可能没这个端点，不该让反馈整体失败
+        native = {"success": False, "error": f"{type(e).__name__}: {str(e)[:60]}"}
     log(f"  反馈已记录：{outcome}（usage {meta['usage_count']}，"
         f"成功 {meta.get('success_count', 0)} / 失败 {meta.get('failure_count', 0)}，"
         f"可靠度 {reliability(meta)}）")
-    return {"ok": ok, "outcome": outcome, "meta": meta, "response": response}
+    return {"ok": ok, "outcome": outcome, "meta": meta, "response": response, "native": native}
 
 
 def verify(cfg, content_hash: str, days: int = 180, client: MemoryClient | None = None,
