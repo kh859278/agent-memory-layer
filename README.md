@@ -142,6 +142,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml feedback --hash H --outcome worked\|failed\|used` | 质量反馈：让"被召回"与"有用"分开计分，影响同档位排序（没数据的记忆不受惩罚） |
 | `aml migrate procedure` | 存量迁移：给已灌进库的技能正文补打 `kind:procedure`（默认只预览，可回滚） |
 | `aml bench --tasks FILE` | 检索基准：memory ON/OFF 对照（入口命中率 + 平均注入字数；**不是**任务成功率） |
+| `aml bench --task-level` | **任务级基准**：真起 agent 跑同一批任务两遍（有记忆/无记忆），判成败并统计成功率、返工、耗时、token、被记忆带偏率、既有功能回退率（`--feedback` 顺手回写反馈；有回退/违禁则退出码非 0，可当门禁） |
 | `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
 | `aml dedup` | 近义知识合并（默认只预览；`--apply` 才合并，**整簇快照可 `--rollback`**） |
 | `aml backfill-embeddings` | 补齐**缺向量**的记录（缺向量 = 语义检索永远搜不到），`--prune-orphans` 清重复孤儿 |
@@ -149,6 +150,8 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml patrol run` | 技能治理一轮：纳管 → 更新 → 镜像入库 → 包版本 → 写播报队列 |
 | `aml patrol check` / `update` | 比上游 commit：**干净的自动更新，本地改过的只暂存**（`--deep` 用内容指纹兜底） |
 | `aml patrol diff` | 采纳前审阅：正文 diff + **新增能力信号**（网络/shell/密钥/写文件/git 写）；`--fail-on-risk` 可做门禁 |
+| `aml patrol capabilities` | 能力声明（`skill.yaml`）vs **实测**信号：没声明却在跑 shell/网络的最该先补 |
+| `aml patrol lifecycle` | 技能生命周期状态机：看状态 / 改状态（只允许合法迁移，越级要 `--force` 并留痕）；**只有 approved/active 允许自动更新** |
 | `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
 | `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份） |
 | `aml patrol packages` | 包版本监控（只监控不升级，附 release notes 摘要） |

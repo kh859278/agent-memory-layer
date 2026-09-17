@@ -306,10 +306,12 @@ def cmd_migrate(args):
 
 
 def cmd_bench(args):
-    """检索基准：memory ON vs OFF（口径是入口覆盖率与上下文成本，不是任务成功率）。"""
+    """基准：检索层（入口覆盖率）或任务层（真跑 agent）。口径不同，别混着看。"""
     import os
 
     cfg = _cfg(args)
+    if getattr(args, "task_level", False):
+        return _cmd_task_bench(args, cfg)
     from . import bench
     path = args.tasks or bench.default_task_path(cfg)
     if not os.path.isfile(path):
@@ -323,6 +325,50 @@ def cmd_bench(args):
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["on"]["hit_rate"] >= args.min_hit_rate else 1
+
+
+def _cmd_task_bench(args, cfg):
+    """任务级基准：真起 agent、真花钱。默认不写反馈（`--feedback` 才动数据）。"""
+    import os
+
+    from . import taskbench
+    path = args.tasks or taskbench.default_task_path(cfg)
+    if not os.path.isfile(path):
+        print(f"找不到任务表：{path}\n"
+              f"格式见 tools/bench/task-level.example.jsonl"
+              f"（复制到该路径后按你的项目改；任务表不进仓库）", file=sys.stderr)
+        return 2
+    tasks = taskbench.load_tasks(path)
+    arms = [a.strip() for a in (args.arms or "off,on").split(",") if a.strip()]
+    unknown = [a for a in arms if a not in ("off", "on")]
+    if unknown:
+        print(f"--arms 只支持 off/on，收到：{unknown}", file=sys.stderr)
+        return 2
+    try:
+        agent = taskbench.resolve_agent(
+            ([args.agent] if isinstance(args.agent, str) else args.agent)
+            if args.agent else taskbench.default_agent())
+    except FileNotFoundError as e:
+        print(f"{e}\n（本机装了 claude 就能直接跑；没有的话用 --agent 指个能读 stdin 出 JSON 的命令）",
+              file=sys.stderr)
+        return 2
+    print(f"任务表：{path}（{len(tasks)} 个任务 × {arms} × {max(1, args.repeats)} 次）")
+    print(f"agent：{' '.join(agent)}")
+    print("提示：这一步会真的起 agent 并产生费用；跑完会给出六项指标与增量。", flush=True)
+    # 逐行 flush：任务级基准一跑就是几分钟，输出被管道缓冲住等于没有进度
+    report = taskbench.evaluate(cfg, tasks, arms=arms, agent=agent, fixtures=args.fixtures,
+                               keep=args.keep, repeats=max(1, args.repeats),
+                               log=None if args.quiet else (lambda m: print(m, flush=True)),
+                               feedback=args.feedback)
+    print(taskbench.render(report))
+    if not args.no_save:
+        print(f"报告已存：{taskbench.save_report(cfg, report)}")
+    if args.json:
+        print(json.dumps({k: v for k, v in report.items() if k != "rows"},
+                         ensure_ascii=False, indent=2))
+    # 退出码：有回归/违禁就非 0 —— 这样能挂进 CI 当"没把事弄坏"的门禁
+    bad = sum(1 for r in report["rows"] if r.get("regressed") or r.get("forbidden_hits"))
+    return 1 if bad else 0
 
 
 def cmd_mcp(args):
@@ -540,15 +586,39 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, help="brief 字数上限")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_notify(_cfg(args), args))
 
+    sp = psub.add_parser("capabilities", help="技能能力：声明（skill.yaml）vs 实测出来的信号")
+    sp.add_argument("name", nargs="?", help="只看某个技能")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_capabilities(_cfg(args), args))
+
+    sp = psub.add_parser("lifecycle", help="技能生命周期：看状态 / 改状态（只允许合法迁移，留 history）")
+    sp.add_argument("name", nargs="?", help="技能名（不给就列出全部）")
+    sp.add_argument("--set", dest="target", help="改成这个状态（discovered…retired）")
+    sp.add_argument("--why", default="", help="为什么改（写进 history，可查）")
+    sp.add_argument("--by", default="human", help="谁改的（默认 human）")
+    sp.add_argument("--force", action="store_true", help="允许越级迁移（history 里标 forced）")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_lifecycle(_cfg(args), args))
+
     sp = sub.add_parser("mcp", help="起 MCP server（stdio JSON-RPC），把记忆层暴露给任何 MCP 客户端")
     sp.set_defaults(func=cmd_mcp)
 
-    sp = sub.add_parser("bench", help="检索基准：memory ON vs OFF（入口覆盖率 + 上下文成本）")
+    sp = sub.add_parser("bench", help="基准：检索层（入口覆盖率）或任务层（真跑 agent 的成败/成本）")
     sp.add_argument("--tasks", help="任务表路径（默认 $AML_HOME/state/bench-tasks.jsonl）")
     sp.add_argument("--min-hit-rate", type=float, default=0.0,
                     help="命中率低于该值时退出码 1（可做回归门禁）")
     sp.add_argument("--quiet", action="store_true")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--task-level", action="store_true",
+                    help="跑任务级基准（真起 agent，花钱）：成功率/返工/耗时/token/违禁/回归")
+    sp.add_argument("--arms", default="off,on", help="任务级：跑哪些分组，默认 off,on")
+    sp.add_argument("--agent", help="任务级：agent 命令（prompt 走 stdin、stdout 出 JSON）")
+    sp.add_argument("--repeats", type=int, default=1, help="任务级：每个任务每分组重复次数")
+    sp.add_argument("--fixtures", help="任务级：fixture 根目录（默认 tools/bench/fixtures）")
+    sp.add_argument("--keep", action="store_true", help="任务级：保留临时工作目录（出问题复查用）")
+    sp.add_argument("--feedback", action="store_true",
+                    help="任务级：把结果自动回写成记忆反馈（会改数据，默认关）")
+    sp.add_argument("--no-save", action="store_true", help="任务级：不把报告落盘")
     sp.set_defaults(func=cmd_bench)
 
     sp = sub.add_parser("migrate", help="存量迁移（给已灌进库的程序性内容补打 kind:procedure，可回滚）")

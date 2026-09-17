@@ -53,6 +53,9 @@ addopts = "-q"
 [tool.ruff]
 line-length = 110
 target-version = "py39"
+# 基准 fixture 是**故意写坏的练习项目**（任务就是让 agent 把它修好）：
+# 不能被仓库的 lint 规则"顺手修漂亮"，否则任务本身就不存在了。
+extend-exclude = ["tools/bench/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

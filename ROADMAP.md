@@ -34,8 +34,8 @@
 - [x] **`backfill-embeddings`**：补齐缺向量的记录（必须带 `conversation_id`，否则被语义去重拒收）
       + `--prune-orphans`
 - [x] **`repo_guard`**：多会话共享工作区时的提交守门器（加锁串行化、拒绝 `-A`、对表远端、跑守门）
-- [x] pytest **85+ 个测试**（合成 fixture；含备份↔恢复往返、坏备份拒收、队列重蒸、
-      跨平台路径/时钟粒度回归、守门器拒绝越权暂存）
+- [x] pytest **150+ 个测试**（合成 fixture；含备份↔恢复往返、坏备份拒收、队列重蒸、
+      跨平台路径/时钟粒度回归、守门器拒绝越权暂存、任务级基准的判分口径与状态机迁移）
 - [x] `ruff` 全绿；GitHub Actions：3 系统 × 2 Python 版本（**含 3.9**）+ 内容泄漏扫描 + 3.9 编译兜底；
       **CI 绿**（badge 实测 passing）
 - [x] 本机对着线上数据（只读）验证：`doctor` 0 失败、`search` 命中跨项目沉淀、
@@ -81,10 +81,21 @@
 
 ### 3.3 技能治理 → 完整生命周期（现在只是"更新治理"）
 
-- [ ] **状态机**：`discovered → tracked → candidate → scanned → approved → active →
-      deprecated → disabled → retired`（现在只有 tracked / clean / modified / staged）
-- [ ] **能力声明 + 风险扫描**：`SKILL.md` 旁边加 `skill.yaml`（capabilities: shell/network/
-      filesystem/secrets + side_effects + scope + requires_approval），更新时做**能力差异**而不是只看 commit
+- [x] **状态机**：`discovered → tracked → candidate → scanned → approved → active →
+      deprecated → disabled → retired`（`state/patrol/lifecycle.json`，每次变更留 history：
+      谁/何时/为什么/是否越级）。口径：**只有 `approved` / `active` 允许被自动更新**，
+      其余状态一律只暂存待批；`deprecated`/`disabled`/`retired` 不更新也不加载。
+      老技能不会被"升级当天全拦一轮"——没登记过的会按本地/上游状态**就地推断登记**
+      （受跟踪 + 本地干净 = `active`，有本地改动 = `candidate`，有待批上游版 = `scanned`）。
+      CLI：`aml patrol lifecycle [name] [--set STATE --why …]`
+- [x] **能力声明 + 风险扫描**：`SKILL.md` 旁边加 `skill.yaml`
+      （`capabilities: [shell|network|secrets|filesystem-write|git-write|install|browser|url]`
+      ＋ `scope` / `requires_approval` / `authority`），与 `patrol diff` 的实测信号直接对比。
+      **闸门第 4 条**（加在原有三条安全闸门之后）：本地干净也不一定自动覆盖 ——
+      生命周期状态不在 `approved/active`、声明了 `requires_approval`、
+      或**上游新版新增了未声明的高风险能力** → 只暂存（动作记为 `gated`，播报里也会说）。
+      人采纳（`aml patrol accept`）即把生命周期推到 `approved` —— 那道闸门的出路就是人。
+      CLI：`aml patrol capabilities [name] [--json]`（看声明 vs 实测，没声明的风险单列）
 - [x] **`patrol diff`**：`accept` 之前看清"上游改了什么" —— 文件级增删改 + 正文统一 diff +
       **能力信号差异**（网络请求 / shell 调用 / 读密钥 / 写删文件 / git 写操作 / 装依赖 / 浏览器
       自动化；裸链接单列"留意"）。默认**不联网**（审已暂存的 `_pending/`），`--fetch` 才去上游取快照；
@@ -114,9 +125,17 @@
       ⚠️ 说清口径：这一层证明"入口覆盖得住、上下文不贵"，**不等于**任务成功率；
       首跑用的是标题当查询（偏易），真实评估应写**改写过的问法**。
       任务表放 `$AML_HOME/state/bench-tasks.jsonl`（不进仓库），模板见 `tools/bench/tasks.example.jsonl`
-- [ ] **基准（任务层，真正的下一步）**：需要一个 agent harness —— 同一批任务跑两遍
-      （有记忆 / 无记忆），判成败并统计：任务成功率、返工次数、到解时间、token 消耗、
-      错误记忆率、技能回退率。这是把 README 的定位从"主张"变成"可验证"的关键
+- [x] **基准（任务层）**：`aml bench --task-level` —— 真起 agent 跑同一批任务两遍
+      （有记忆/无记忆），判成败并统计：成功率、返工（轮数+改动文件）、耗时、
+      token/成本、被记忆带偏率（违禁串）、既有功能回退率；`--feedback` 顺手把结果
+      按证据回写成记忆反馈；有回退/违禁则退出码非 0（可做 CI 门禁）。
+      关键机制：fixture 的 `_hidden/`（验收标准判分前才拷进工作区，agent 看不到）——
+      这是唯一能区分"记得"与"猜得到"的手段。任务表不进仓库，模板见
+      `tools/bench/task-level.example.jsonl`，方法论与边界见 `docs/TASK-BENCH.md`。
+      **首跑实测（3 任务 × 2 组，$1.79）**：OFF/ON 都 100% 成功、0 违禁、0 回归，
+      成功率差值 +0%，token 差值 −116（噪声级）—— 诚实结论是：
+      **在这些"能从仓库推出做法"的任务上，记忆没改变成败**；
+      要证明价值必须挑"仓库里没有、prompt 里也不说"的约定型任务（下一批）
 - [ ] **一条命令接入**：`pipx install` + `aml init` 后自动发现各 agent、首次 sync、首次 recall
       （目标是 10 分钟内完成第一次成功召回）
 - [ ] `aml memories` / `aml why <hash>`：让人能看见"库里有什么、为什么召回它"

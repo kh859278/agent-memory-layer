@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 from . import kb
-from .patrol import github, packages, skills, update
+from .patrol import capability, github, packages, skills, update
 from .patrol.notify import NoticeQueue
 
 
@@ -87,6 +88,10 @@ def cmd_patrol_update(cfg, args, log=print) -> int:
         if updated:
             shown = "、".join(updated[:4]) + ("…" if len(updated) > 4 else "")
             parts.append(f"技能自动更新 {len(updated)} 个（{shown}）")
+        gated = results.get("gated") or []
+        if gated:
+            shown = "、".join(gated[:4]) + ("…" if len(gated) > 4 else "")
+            parts.append(f"{len(gated)} 个被能力/生命周期闸门拦下待批（{shown}）")
         staged = results["staged"] + results["patched"]
         if staged:
             parts.append(f"{len(staged)} 个待复核已暂存")
@@ -184,8 +189,10 @@ def cmd_patrol_run(cfg, args, log=print) -> int:
         for label, info in report.items():
             log(f"  {label}: +{info['added_or_updated']} / -{info['removed']}")
         log(f"  {skills.write_inventory(cfg)}")
+        # 生命周期登记放在镜像之后：这时 meta（local_diff / staged_upstream）才是这一轮的新值
+        capability.ensure(cfg, log=log)
 
-    phase("=== 3/4 知识库镜像 + 清单 ===", _mirror)
+    phase("=== 3/4 知识库镜像 + 清单 + 生命周期登记 ===", _mirror)
     phase("=== 4/4 包版本监控 ===", cmd_patrol_packages, cfg, args, log=log)
 
     brief = NoticeQueue(cfg).brief()
@@ -211,6 +218,85 @@ def cmd_patrol_diff(cfg, args, log=print) -> int:
     return 0
 
 
+def cmd_patrol_capabilities(cfg, args, log=print) -> int:
+    """技能能力：**声明 vs 实测**。没声明却在跑 shell/网络，是最该先补的。"""
+    from .patrol import capability
+    name = getattr(args, "name", None)
+    if name:
+        path = next((p for n, p, _ in skills.all_skills(cfg) if n == name), None)
+        if not path:
+            print(f"找不到技能：{name}", file=sys.stderr)
+            return 2
+        info = capability.compare(path)
+        print(f"技能 {name}")
+        print(f"  声明：{info['declared'] or '（没有 skill.yaml —— 无声明 ≠ 声明为空）'}")
+        print(f"  实测：{ {k: len(v) for k, v in info['detected'].items()} or '（没扫到能力信号）'}")
+        if info["undeclared_high_risk"]:
+            print(f"  ⚠ 实测到但**没声明**的高风险能力：{', '.join(info['undeclared_high_risk'])}")
+        elif info["undeclared"]:
+            print(f"  实测到但没声明的能力：{', '.join(info['undeclared'])}")
+        if info["declared_but_unused"]:
+            print(f"  声明了但没扫到证据：{', '.join(info['declared_but_unused'])}")
+        if args.json:
+            print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0
+    report = capability.overview(cfg)
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(capability.render(cfg))
+    return 0
+
+
+def cmd_patrol_lifecycle(cfg, args, log=print) -> int:
+    """生命周期：不给 --set 就列出（并顺手登记新技能），给了就改（只允许合法迁移）。"""
+    from .patrol import capability
+    added = capability.ensure(cfg, log=log)
+    name = getattr(args, "name", None)
+    target = getattr(args, "target", None)
+    if name and target:
+        result = capability.set_state(cfg, name, target, why=args.why, by=args.by,
+                                      force=args.force, log=log)
+        if not result.get("ok"):
+            print(f"没有改成：{result['error']}", file=sys.stderr)
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 2
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    data = capability.overview(cfg)
+    if name:
+        row = next((r for r in data["skills"] if r["name"] == name), None)
+        if not row:
+            print(f"找不到技能：{name}", file=sys.stderr)
+            return 2
+        entry = (capability.load(cfg)["skills"] or {}).get(name) or {}
+        row["history"] = entry.get("history") or []
+        row["allowed_next"] = list(capability.TRANSITIONS.get(row["state"]) or [])
+        if args.json:
+            print(json.dumps(row, ensure_ascii=False, indent=2))
+            return 0
+        print(f"技能 {name}：状态 {row['state']}（自 {row.get('since') or '?'}）")
+        print(f"  可以改成：{', '.join(row['allowed_next']) or '（终态）'}")
+        print(f"  声明：{row['declared'] or '（无 skill.yaml）'}"
+              + ("　需人工批准" if row["requires_approval"] else ""))
+        if row["undeclared_high_risk"]:
+            print(f"  ⚠ 未声明的高风险能力：{', '.join(row['undeclared_high_risk'])}")
+        for item in row["history"][-8:]:
+            print(f"  · {item.get('at')} {item.get('from')} → {item.get('to')}"
+                  f"（{item.get('by')}）{item.get('why') or ''}"
+                  + ("　[越级]" if item.get("forced") else ""))
+        return 0
+    if added and not args.json:
+        log("")
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return 0
+    print(capability.render(cfg))
+    return 0
+
+
 def dt_now() -> str:
     import datetime as dt
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -218,4 +304,5 @@ def dt_now() -> str:
 
 __all__ = ["cmd_patrol_sync", "cmd_patrol_adopt", "cmd_patrol_check", "cmd_patrol_update",
            "cmd_patrol_accept", "cmd_patrol_packages", "cmd_patrol_notify", "cmd_patrol_run",
-           "cmd_patrol_diff", "github", "skills", "update", "packages"]
+           "cmd_patrol_diff", "cmd_patrol_capabilities", "cmd_patrol_lifecycle",
+           "github", "skills", "update", "packages"]

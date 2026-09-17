@@ -27,13 +27,15 @@ FTS_MIN_TERM = 2
 
 
 class Result:
-    def __init__(self, phase, lines, used, budget, layers, diag):
+    def __init__(self, phase, lines, used, budget, layers, diag, hashes=None):
         self.phase = phase
         self.lines = lines
         self.used = used
         self.budget = budget
         self.layers = layers
         self.diag = diag
+        # 与 lines 一一对应的 content_hash（逐条归因用：谁被注入了、谁真被用上了）
+        self.hashes = list(hashes or [])
 
     @property
     def empty(self) -> bool:
@@ -250,7 +252,7 @@ class Retriever:
             take(kw_pool)
             layers.append("全库")
 
-        lines, used = [], 0
+        lines, hashes, used = [], [], 0
         for s, m in picked:
             content = (m.get("content") or "").replace("\n", " ").strip()
             if not content:
@@ -274,12 +276,13 @@ class Retriever:
             rel = reliability(meta)
             rel_text = f"|rel {rel:.2f}" if rel is not None else ""
             lines.append(f"[{layer}|{domain}|{stamp}|{score}{rel_text}] {stale}{content[:result_chars]}")
+            hashes.append(m.get("content_hash") or "")
             if used >= budget:
                 break
 
         if query and not allow_repeat:
             self.mark(phase, query)
-        return Result(phase, lines, used, budget, layers, diag)
+        return Result(phase, lines, used, budget, layers, diag, hashes)
 
     # ---------------- 体检 ----------------
     def diagnostics(self) -> dict:

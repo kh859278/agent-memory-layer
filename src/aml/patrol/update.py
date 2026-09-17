@@ -6,6 +6,12 @@
   2. `local_diff: true`，或本地指纹 ≠ 元数据里的 `content_hash` —— 本地被动过，只暂存
   3. 其余（本地干净）—— 备份 → 覆盖 → 更新元数据
 
+**第 4 条闸门（能力与生命周期，2026-09-17 加）**：本地干净也**不一定**自动覆盖 ——
+还要看 `patrol.capability.gate`：技能生命周期状态必须是 `approved`/`active`、
+`skill.yaml` 没声明 `requires_approval`、上游新版没有"新增的未声明高风险能力"。
+不满足就只暂存（动作记为 `gated`）并说明原因。这条闸门要解决的正是
+"一个从没被人看过的新技能和用了半年的老技能待遇一样"这个问题。
+
 判断"上游变没变"优先用 sha（便宜），拿不到 sha 时可以退到内容指纹（`deep=True`，慢）。
 """
 from __future__ import annotations
@@ -14,9 +20,9 @@ import os
 import shutil
 import subprocess
 
-from . import github, skills
+from . import capability, github, skills
 
-ACTIONS = ("updated", "staged", "patched", "uptodate", "failed", "unknown")
+ACTIONS = ("updated", "staged", "patched", "uptodate", "failed", "unknown", "gated")
 
 
 def _blank():
@@ -152,6 +158,18 @@ def update_one(cfg, name, local_dir, meta, mpath, up_dir, sha) -> tuple:
             skills.write_meta(local_dir, meta, mpath)
         return "uptodate", "上游内容无变化（仅提交变化）"
 
+    # 第 4 条闸门：本地干净也要过能力/生命周期审批（见模块 docstring）
+    verdict = capability.gate(cfg, name, local_dir, up_dir, meta=meta)
+    if not verdict["allow"]:
+        staged = skills.stage_skill(cfg, up_dir, name, (sha or up_hash)[:7])
+        meta.update({"last_checked": skills.today(), "upstream_hash": up_hash,
+                     "staged_upstream": staged, "staged_reason": "；".join(verdict["reasons"])})
+        if sha:
+            meta["commit"] = sha
+        if mpath:
+            skills.write_meta(local_dir, meta, mpath)
+        return "gated", "只暂存待批：" + "；".join(verdict["reasons"])
+
     skills.backup_skill(cfg, local_dir, name, (old or "unknown")[:7])
     skills.sync_dir(up_dir, local_dir)
     meta.update({"content_hash": skills.dir_hash(local_dir), "upstream_hash": up_hash,
@@ -256,7 +274,7 @@ def check(cfg, log=print, check_only: bool = False, deep: bool = False) -> tuple
                     action, why = "failed", f"{type(e).__name__} {str(e)[:80]}"
                 results[action].append(name)
                 icon = {"updated": "⬆️", "staged": "📥", "patched": "🛡️", "uptodate": "✅",
-                        "failed": "❌", "unknown": "⚠️"}[action]
+                        "failed": "❌", "unknown": "⚠️", "gated": "🔒"}[action]
                 details.append(f"- {icon} **{name}**（{repo}@{used}）：{why}")
                 log(f"  {icon} {name}: {why}")
         finally:
@@ -302,7 +320,11 @@ def check(cfg, log=print, check_only: bool = False, deep: bool = False) -> tuple
 
 
 def accept(cfg, name: str | None = None, all_: bool = False, log=print) -> dict:
-    """采纳暂存的上游版本（覆盖本地，先备份）。"""
+    """采纳暂存的上游版本（覆盖本地，先备份）。
+
+    **人就是那道批准**：采纳成功即把生命周期推到 `approved`（并留下 history）——
+    被闸门拦下（`gated`）的技能正是靠这一步转正。
+    """
     items = skills.pending_items(cfg)
     targets = [x for x in items if all_ or (name and x["name"] == name)]
     done = []
@@ -319,8 +341,16 @@ def accept(cfg, name: str | None = None, all_: bool = False, log=print) -> dict:
                      "installed_at": skills.today(), "last_checked": skills.today()})
         meta["upstream_hash"] = meta["content_hash"]
         meta.pop("staged_upstream", None)
+        meta.pop("staged_reason", None)
         skills.write_meta(local, meta, mpath)
         shutil.rmtree(item["path"], ignore_errors=True)
         done.append(item["name"])
+        # 人工批准 → 生命周期转正（这也是 `gated` 状态的出路）
+        state = capability.state_of(cfg, item["name"])
+        if state in capability.BLOCKED:
+            log(f"  ⚠ {item['name']} 生命周期为 {state}，仍按你的要求采纳了（状态未改）")
+        else:
+            capability.set_state(cfg, item["name"], "approved", why="人工采纳上游版本",
+                                 by="human", log=lambda *_a, **_k: None)
         log(f"  ✅ {item['name']} 已采纳上游版（旧版已备份）")
     return {"accepted": done, "requested": len(targets)}
