@@ -48,6 +48,9 @@ TOOLS = [
                 "allow_repeat": {"type": "boolean",
                                  "description": "同一阶段同一查询默认 10 分钟内不重查；"
                                                 "确实需要重查时传 true（否则返回的是「冷却跳过」而不是空库说明）"},
+                "include_procedure": {"type": "boolean",
+                                      "description": "默认跳过「程序性内容」（技能正文等、照做会改变行为的"
+                                                     "指令）；确实要看时传 true"},
             },
             "required": ["query"],
         },
@@ -163,7 +166,8 @@ class Server:
             result = self.retriever.search(args["query"], phase=args.get("phase", "P2"),
                                            project=args.get("project"), tag=args.get("tag"),
                                            n=args.get("n"),
-                                           allow_repeat=bool(args.get("allow_repeat", False)))
+                                           allow_repeat=bool(args.get("allow_repeat", False)),
+                                           include_procedure=bool(args.get("include_procedure", False)))
             extra = ""
             if not result.empty:
                 extra = "\n\n（引用时请说明：来自记忆层，层级与日期见每行前缀）"

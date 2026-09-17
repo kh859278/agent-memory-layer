@@ -1,8 +1,12 @@
 # ROADMAP
 
-从一台**真实在用的机器**上抽取这套系统的过程，分三步。`[x]` = 已完成并在本机验证过。
+从一台**真实在用的机器**上抽取这套系统的过程。`[x]` = 已完成并在本机验证过。
+> 维护约定：**这一页必须与 README 的能力描述同步**。曾经的教训是 README 已经把 `patrol`/`mcp`
+> 当现有能力介绍，而这里还把它们留在"未完成"区 —— 读者无法判断哪个是权威状态。
+> 改完功能就顺手改这里（`tools/repo_guard.py` 提交前会跑测试，但不检查文档一致性，
+> 所以这条靠自觉 + review）。
 
-## Step 1 拆仓去内容
+## Step 1 拆仓去内容 ✅
 
 - [x] 新仓库骨架：`src/aml/`、`tests/`、`tools/`、`.github/workflows/`、`pyproject.toml`、`LICENSE`(MIT)、`.gitignore`
 - [x] **配置层**：`AML_HOME` + `config.yaml` + 环境变量 + 命令行，四级覆盖；程序里不再出现绝对路径
@@ -10,60 +14,107 @@
 - [x] 无关项目代码**不进仓**：客户线索库、飞书同步、抓取脚本等留在原处，本仓库只有记忆层机制
 - [x] 从实战长出来的规则进代码：噪声过滤（界面回显/纯确认语）、正文截断上限、原始时间戳
 
-## Step 2 可安装可验证
+## Step 2 可安装可验证 ✅
 
 - [x] `aml` CLI：`init` / `doctor` / `sync` / `watch` / `distill` / `search` / `ingest-kb` / `index`
-      / `backup` / `restore` / `export` / `review` / `denoise`
-- [x] **体检** `aml doctor`：目录、服务、向量覆盖、FTS、**索引新鲜度（比对索引自报数 vs 库内数）**、
-      各 adapter 能否看到会话、泛词检索自测 —— 每项都带"怎么修"
-- [x] **合并检索栈**：`kb_lookup` 的阶段预算 + `recall_plus` 的级联回退合成 `retrieval.py`
-      （0.80→0.72→0.65→FTS5→LIKE，未命中必须解释为什么空）
-- [x] **`aml backup` / `aml restore`**：在线备份 + 恢复前预检（integrity_check + 条数）
-      + 恢复前自动另存现有库 —— **补上了原系统"只有备份没有恢复"的缺口**
-      （顺带修掉一个真 bug：同一秒内连续备份会互相覆盖，现在文件名带微秒）
-- [x] `aml export`：导出成人可读 markdown（按领域分组）/ 原始 JSON
-- [x] `aml watch`：常驻监听（DSH 归档即时入库 / 会话静默 ≥stable 秒增量入库），
-      状态存 `state/watch_state.json`；蒸不蒸按 agent 分开（kimi 只入库、子代理不蒸、DSH 要求 ≥3 轮）
-- [x] `aml distill`：会话 → 跨项目知识（`kind:knowledge`+`domain:*`、复核期、互斥锁、
-      增量重蒸门槛、逐会话落盘、输入截断防"吃光输出预算返回空"）
-- [x] `aml review` / `aml denoise`（软删除可回滚）/ `aml ingest-kb`（`--since` 增量）
-- [x] pytest **35 个测试**（合成 fixture，含备份↔恢复往返、坏备份拒收、队列增量重蒸、监听冷却判定）
-- [x] `ruff` 全绿；GitHub Actions：3 系统 × 2 Python 版本跑 lint+test，外加**内容泄漏扫描**独立 job
-- [x] `tools/scrub_check.py`：绝对路径 / 凭据 / 邮箱 / 手机号 / 自定义屏蔽词；默认只扫"会被提交的文件"
-- [x] 本机对着线上数据验证：`doctor` 13 项 0 失败、检索命中跨项目沉淀、`sync --dry-run` 采到 4627 条、
-      `backup` 真实备份 68.3 MB / 9720 条并 integrity ok、`export` 导出 9720 条（沉淀 482 / 146 领域）、
-      `watch --seed --dry-run` 看到 223 个会话文件与 49 个已归档会话
+      / `backup` / `restore` / `export` / `review` / `denoise` / `dedup` / `backfill-embeddings` / `mcp`
+- [x] **体检** `aml doctor`：目录、服务、向量覆盖、FTS、**索引新鲜度**、各 adapter 能否看到会话、
+      泛词检索自测 —— 每项都带"怎么修"
+- [x] **合并检索栈**：阶段预算 + 级联回退（0.80→0.72→0.65→FTS5→LIKE）+ **未命中必须解释**
+      （并且区分"冷却跳过"与"真的没有"）
+- [x] **`backup` / `restore`**：在线备份 + 恢复前预检（integrity_check + 条数）+ 恢复前另存现有库
+- [x] `watch`（归档即时入库 / 会话静默增量入库）、`distill`（会话→跨项目知识）、`export`、
+      `review`、`denoise`（软删除）
+- [x] **`patrol` 技能治理**：`sync / adopt / check / update / accept / packages / notify / run`
+      —— 镜像入库 + 重建清单、上游 commit 探测（`git ls-remote` → API → 内容指纹三层）、
+      **三条安全闸门**（本地补丁与本地改动永不覆盖，只暂存）、包版本监控、≤100 字结尾播报
+- [x] **MCP server**（`aml mcp`，stdio JSON-RPC，零额外依赖）：`search / store / phase_spec /
+      brief / ack / doctor` 六个工具；`store` 强制分层（`project` → 项目事实，否则进沉淀层带复核期）
+- [x] **`dedup`**：二元组 Jaccard 聚簇 + 领域约束 + LLM 合并 + **整簇快照可回滚**（默认只预览）
+- [x] **`backfill-embeddings`**：补齐缺向量的记录（必须带 `conversation_id`，否则被语义去重拒收）
+      + `--prune-orphans`
+- [x] **`repo_guard`**：多会话共享工作区时的提交守门器（加锁串行化、拒绝 `-A`、对表远端、跑守门）
+- [x] pytest **85+ 个测试**（合成 fixture；含备份↔恢复往返、坏备份拒收、队列重蒸、
+      跨平台路径/时钟粒度回归、守门器拒绝越权暂存）
+- [x] `ruff` 全绿；GitHub Actions：3 系统 × 2 Python 版本（**含 3.9**）+ 内容泄漏扫描 + 3.9 编译兜底；
+      **CI 绿**（badge 实测 passing）
+- [x] 本机对着线上数据（只读）验证：`doctor` 0 失败、`search` 命中跨项目沉淀、
+      `backup` 68.3 MB / 9720 条 integrity ok、`export` 9720 条、`watch --seed` 223 个会话文件、
+      `dedup` 预览 454 条知识 → 8 个重复簇、MCP stdio 冒烟 6 个工具
 
-### 还没搬过来的（下一步）
+## Step 3 下一步：信任与治理（当前主线）
 
-- [x] **`patrol` 技能治理**：`aml patrol sync / adopt / check / update / accept / packages / notify / run`
-      —— 镜像入库 + 重建清单、上游 commit 探测（git ls-remote → API → 内容指纹三层）、
-      **三条安全闸门**（本地补丁与本地改动永不覆盖，只暂存）、包版本监控（只监控不升级）、
-      ≤100 字结尾播报队列。本机实测：`patrol check` 认出 28 个受跟踪技能全部最新；
-      `patrol sync` 重建清单（46 个技能 / 跟踪 28 / 本地补丁 1），与旧系统数字一致
-- [ ] MCP server：把 `search` / `distill` 暴露给任何 MCP 客户端
-- [ ] `embedding backfill`：补齐缺失向量的记录（缺失 = 永远搜不到）
-- [ ] `dedup`：近义知识合并（带回滚）—— 现在只有 `denoise`（噪声），没有去重
+> 这一节来自一次外部 review（2026-09-17）。我按"是否真的成立"筛过一遍：
+> 成立且优先的排在前面，标注了哪些是**现在就有的实现**、哪些是**缺口**。
+
+### 3.1 信任模型（最先做，其它都依赖它）
+
+- [x] `docs/TRUST-MODEL.md`：把 `observation / memory / knowledge / procedure / skill / policy`
+      六种东西分清，给出信任阶梯与**谁能写哪一层**的权限通道
+- [x] **技能内容不得默默进入通用检索**：`kb.ingest_docs` 对 `ingest.procedure_dirs`（默认 `技能原始`）
+      里的文档打 `kind:procedure` + `authority:procedure`；`Retriever.search` 默认过滤掉它们，
+      `--include-procedure` / MCP `include_procedure: true` 才返回；未命中时明确说明"有 N 条程序性内容被跳过"
+- [ ] **存量迁移**：已经灌进库的技能块（`kb:技能原始`，无 `kind:procedure`）还没重打标签。
+      重灌会因标签进 hash 而产生新记录、旧记录成孤儿 → 需要一次**带回滚的迁移**
+      （重灌 + 用 `backfill-embeddings --prune-orphans` 类似口径清旧），别裸跑
+- [ ] **authority 维度**：检索排序目前只有 `语义分 × 阶段预算 × 层级`。
+      加入 `authority`（谁写的：人审 / 蒸馏 / 会话原文 / 技能）与 `freshness`，并在输出前缀里显示
+- [ ] **写权限分层**：MCP `store` 目前 agent 可自由写 `kind:knowledge`。
+      应该：会话事实可自由写 → 知识候选需复核标记 → 技能/策略候选必须人工批准
+- [ ] **provenance 成为一等字段**：已记录 `src_session`/`evidence`；还缺 `derived_by`
+      （模型 + prompt 版本）与 `source_turns`，排查"这条到底谁说的"时需要
+
+### 3.2 记忆质量闭环（现在只有 review_after，没有反馈）
+
+- [ ] **outcome 反馈**：`usage_count / success_count / failure_count / last_used_at /
+      last_verified_at`，让"被召回"与"有用"分开计分；排序乘上 reliability
+- [ ] **否定记忆与冲突关系**：`supersedes / contradicts / deprecated_by`。
+      现状只有"以时间较新为准"的合并口径，缺显式建模（否则"用 Redis"和"别用 Redis"会同时命中）
+- [ ] **统一 ChangeSet 回滚**：skill 更新、镜像、索引、通知队列目前各自回滚，容易只回滚一半
+
+### 3.3 技能治理 → 完整生命周期（现在只是"更新治理"）
+
+- [ ] **状态机**：`discovered → tracked → candidate → scanned → approved → active →
+      deprecated → disabled → retired`（现在只有 tracked / clean / modified / staged）
+- [ ] **能力声明 + 风险扫描**：`SKILL.md` 旁边加 `skill.yaml`（capabilities: shell/network/
+      filesystem/secrets + side_effects + scope + requires_approval），更新时做**能力差异**而不是只看 commit
+- [ ] **`patrol diff`**：把"上游改了什么"摆出来（正文 diff + 新增的能力/网络调用/危险指令），
+      这是把"更新治理"升级成"治理"的关键一步
+- [ ] **来源可信度**：记录 repo/ref/commit/sha256/publisher，支持"只信白名单来源"
+
+### 3.4 工程与可复现
+
+- [ ] **后端契约固定**：`mcp-memory-service` 的 API/schema/嵌入模型版本写进 doctor 与文档
+      （现在只有 `db_path` 与 API 地址，后端悄悄变会导致检索语义漂移而 AML 看不出来）
+- [ ] **蒸馏前脱敏**：`dirty→LLM` 目前直发会话原文；`scrub_check` 只管仓库内容泄漏，
+      不是"发送前脱敏层"。需要敏感信息（key/token/客户名/内网地址）在调用前打码
+- [ ] **watch 的会话边界**：DSH 有归档事件（强信号），其他 agent 只有"静默 ≥120s"启发式；
+      长思考（>120s）会被误判成会话结束 → 需要结合 agent 生命周期事件
+- [ ] **多会话并发不变量**：git 已有 `repo_guard`；memory/distill/patrol/backup 的
+      ownership / 幂等 / 事务边界还没定义
 - [ ] 可选适配器：Codex CLI / Copilot Chat / Cursor（本机实测这三家当前没有可用会话数据）
-- [ ] `watch` 的守护自愈（原系统用 VBS + `watch-forever.ps1` 保持常驻；跨平台方案待定）
-- [ ] 技能清单的差异视图（`patrol diff`：把"上游改了什么"直接摆出来，而不只是暂存）
+- [ ] `watch` 的守护自愈（原系统用 VBS + `watch-forever.ps1`；跨平台方案待定）
 
-## Step 3 差异化（发布后要打的牌）
+## Step 4 传播与验证（发布后）
 
-- [ ] **跨 agent 时间轴**：写成"如何新增一个 adapter"的文档 —— 这是最容易吸引贡献者的接口
-- [ ] **蒸馏 → 分层知识**：把"会话变可复用经验"做成 MCP 工具，而不只是本地 CLI
-- [ ] **P0–P6 阶段检索协议**：写成 SPEC + 可直接粘贴的 prompt 片段（方法论 + 实现双份）
-- [ ] **技能治理**独立成小项目（受众明确：装了很多 skill 的多 agent 用户）
-- [ ] 基准对比：在这套数据上量一下"有记忆 vs 没记忆"的任务成功率/返工次数
+- [ ] **基准对比**：`memory ON/OFF` + `skill governance ON/OFF`，量任务成功率、返工次数、
+      到解时间、token 消耗、错误记忆率、技能回退率。**没有这个，README 的定位就只是主张**
+- [ ] **一条命令接入**：`pipx install` + `aml init` 后自动发现各 agent、首次 sync、首次 recall
+      （目标是 10 分钟内完成第一次成功召回）
+- [ ] `aml memories` / `aml why <hash>`：让人能看见"库里有什么、为什么召回它"
+- [ ] **定位收敛**：一句话从"另一个 agent memory"改成
+      **"coding agent 的记忆 + 技能治理"**（README 首屏按这个重写）
+- [ ] 技能治理独立成小项目（`skill-patrol`：受众明确，撞车概率低）
+- [ ] 跨 agent 时间轴的"如何新增 adapter"文档（最容易吸引贡献者的接口）
 
 ## 发布前 checklist
 
-- [x] `pyproject.toml` 里 `OWNER` 占位符换成真实 GitHub 用户名（kh859278）
-- [x] 决定仓库名（`agent-memory-layer`）与许可（MIT）
-- [x] git 身份：5 笔提交作者已改为 `jk <293333882+kh859278@users.noreply.github.com>`（内容零变化，tree 校验一致）
-- [x] 已推送到 GitHub：`git@github.com:kh859278/agent-memory-layer.git`（SSH，无需 token）
-- [x] README 重写：徽章 + 真实体检/检索输出 + 同类对照 + 诚实安装说明（PyPI 未发布）+ 开发入口
-- [x] 写清与上游 `mcp-memory-service` 的关系（我们是它的"采集 + 蒸馏 + 阶段检索 + 技能治理"上层）
+- [x] `pyproject.toml` 占位符换成真实 GitHub 用户名（kh859278）；仓库名与许可（MIT）已定
+- [x] git 身份：提交作者改为 `jk <293333882+kh859278@users.noreply.github.com>`
+- [x] 已推送到 GitHub（SSH），CI 绿
+- [x] README：徽章 + 真实输出 + 同类对照 + 诚实安装说明（PyPI 未发布）+ 架构图 + 开发入口
+- [x] 写清与上游 `mcp-memory-service` 的关系
 - [ ] 跑一遍 `python tools/scrub_check.py --all` 确认连被忽略的文件里也没有内容
-- [ ] 仓库 description 与 topics（`ai-agents` `memory` `mcp` `claude-code` `knowledge-base`）—— 网页 10 秒或 API
-- [ ] README 补架构图（可选）
+- [ ] 仓库 description 与 topics（`ai-agents` `memory` `mcp` `claude-code` `knowledge-base`）；
+      **建议加 `skill-governance`**（这是差异化所在）
+- [ ] 发布到 PyPI（`pipx install agent-memory-layer` 是 README 里承诺的下一步）

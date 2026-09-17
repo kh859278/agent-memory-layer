@@ -53,6 +53,9 @@ DEFAULTS: dict = {
         # DSH 自己的会话就在 ~/.dsh/sessions 下，加了会把整个 DSH 适配器过滤成 0 个文件
         # （2026-09-16 抽取时踩过）。
         "skip_path_parts": ["node_modules"],
+        # 这些知识库子目录里的内容是**程序性**的（技能正文：照做会改变行为），
+        # 入库时打 `kind:procedure`，检索默认跳过 —— 见 docs/TRUST-MODEL.md
+        "procedure_dirs": ["技能原始"],
     },
     "retrieval": {
         # 级联回退：语义@高阈值 → 语义@中 → 语义@低 → 关键词 → 兜底

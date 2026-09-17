@@ -133,7 +133,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml sync` | 采集所有 agent 会话入库 + **把 created_at 回填成原始时间**（`--dry-run` 只看） |
 | `aml watch` | 常驻监听：归档即时入库、会话静默 ≥120s 后增量入库（`--seed` 只记基线） |
 | `aml distill` | 会话 → 跨项目知识（`--list` / `--session` / `--rebuild-md`） |
-| `aml search Q --phase P2` | 分阶段检索：级联回退 + 未命中解释（`--explain` 看诊断） |
+| `aml search Q --phase P2` | 分阶段检索：级联回退 + 未命中解释（`--explain` 看诊断；`--include-procedure` 才返回技能正文） |
 | `aml ingest-kb` | 知识库文档分块灌库（`--since` 增量） |
 | `aml index rebuild` | 重建知识库索引（索引会腐化，`doctor` 会告警） |
 | `aml backup` / `aml restore` | 在线备份（按天保留）/ **从备份恢复**（默认预检，`--yes` 才写，且先自动另存现有库） |
@@ -287,6 +287,15 @@ schtasks /Create /TN "aml-patrol" /SC DAILY /ST 09:30 ^
 3. **P0–P6 阶段检索协议**：把"检索"从"任务开头查一次"变成"生命周期每个节点各查各的，且各有预算"
 
 **我们不做什么**：不做 agent 运行时、不做托管服务、不做事实有效期图谱、不做 UI。
+
+## 信任模型
+
+库里放着五种**信任等级完全不同**的东西：会话原文、项目事实、跨项目知识、**程序性内容**（技能正文）、
+技能本身。混在一起检索是要出事的 —— 一条知识错了顶多给错信息，一条**指令**错了会直接改变 agent 的行为。
+
+所以：跨项目知识进沉淀层最优先；程序性内容打 `kind:procedure` 并**默认不参与检索**
+（只该被显式加载）；技能靠 `patrol` 管版本与覆盖保护。细节与"谁能写哪一层"见
+[`docs/TRUST-MODEL.md`](docs/TRUST-MODEL.md)。
 
 ## 隐私与安全
 

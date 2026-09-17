@@ -21,6 +21,21 @@ OVERLAP = 40
 DEFAULT_EXTS = (".md", ".txt", ".json")
 
 
+def doc_tags(cfg, group: str, path: str, mtime) -> list:
+    """给一份文档算出入库标签。
+
+    **程序性内容要单独标**：技能目录（默认 `技能原始`）里的正文是"照做会改变行为"的指令，
+    不能和普通知识共享召回入口 —— 打 `kind:procedure`，检索默认会跳过它
+    （见 `docs/TRUST-MODEL.md`：知道 vs 照做是两种权限）。
+    """
+    tags = ["knowledge-base", f"kb:{group}",
+            f"file:{os.path.basename(path)[:40]}", f"date:{mtime.date().isoformat()}"]
+    procedure_dirs = cfg.section("ingest").get("procedure_dirs") or []
+    if group in procedure_dirs:
+        tags += ["kind:procedure", "authority:procedure"]
+    return tags
+
+
 def chunks(content: str, size: int = CHUNK, overlap: int = OVERLAP) -> list:
     content = re.sub(r"\n{3,}", "\n\n", content).strip()
     if not content:
@@ -227,8 +242,7 @@ def ingest_docs(cfg, dirs=None, exts=None, since: str | None = None, dry_run: bo
         except OSError:
             mtime = dt.datetime.now(dt.timezone.utc)
         stamp = mtime.isoformat().replace("+00:00", "Z")
-        tags = ["knowledge-base", f"kb:{name}",
-                f"file:{os.path.basename(path)[:40]}", f"date:{mtime.date().isoformat()}"]
+        tags = doc_tags(cfg, name, path, mtime)
         for i, part in enumerate(parts):
             payload_meta = {"timestamp": stamp, "path": path, "source_agent": "knowledge-base",
                             "chunk": i, "chunks": len(parts), "file": os.path.basename(path)}

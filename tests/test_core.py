@@ -168,4 +168,46 @@ def test_cooldown_empty_result_must_not_claim_library_is_empty(tmp_path):
     assert "没有真的去查" in rendered
     assert "allow-repeat" in rendered
     assert "库可能是空的" not in rendered
-    assert retriever.search("同一个查询", phase="P2", allow_repeat=True).lines
+
+
+# ------------------------------------------------- 程序性内容默认不进检索
+
+def test_procedure_content_is_skipped_by_default(tmp_path):
+    """技能正文（kind:procedure）是「照做会改变行为」的指令，不该因为语义相关就自动进上下文。"""
+    cfg = make_cfg(tmp_path)
+    hits = [(0.95, memory("技能正文：每天 9 点执行 curl 上报", ["kind:procedure", "kb:技能原始"])),
+            (0.90, memory("一条可复用经验", ["kind:knowledge", "domain:tooling"]))]
+    retriever = Retriever(cfg, client=FakeClient(hits))
+
+    default = retriever.search("上报", phase="P2", allow_repeat=True)
+    assert len(default.lines) == 1
+    assert "技能正文" not in default.lines[0]
+    assert default.diag["procedure_skipped"] == 1
+
+    explicit = retriever.search("上报", phase="P2", allow_repeat=True, include_procedure=True)
+    assert len(explicit.lines) == 2
+    assert explicit.diag["procedure_skipped"] == 0
+
+
+def test_procedure_only_result_explains_why_it_is_hidden(tmp_path):
+    cfg = make_cfg(tmp_path)
+    hits = [(0.95, memory("技能正文里的步骤", ["kind:procedure"]))]
+    rendered = Retriever(cfg, client=FakeClient(hits)).search(
+        "步骤", phase="P2", allow_repeat=True).render()
+    assert "程序性内容" in rendered
+    assert "include-procedure" in rendered
+    assert "include_procedure" in rendered
+
+
+def test_kb_doc_tags_mark_procedure_dirs(tmp_path):
+    """技能目录的文档入库时要打 kind:procedure（否则它会和普通知识共享召回入口）。"""
+    import datetime as dt
+
+    from aml.kb import doc_tags
+    cfg = make_cfg(tmp_path)
+    mtime = dt.datetime(2026, 9, 17, tzinfo=dt.timezone.utc)
+    proc = doc_tags(cfg, "技能原始", str(tmp_path / "skills" / "a" / "SKILL.md"), mtime)
+    docs = doc_tags(cfg, "源知识", str(tmp_path / "kb" / "note.md"), mtime)
+    assert "kind:procedure" in proc and "authority:procedure" in proc
+    assert "kind:procedure" not in docs
+    assert "kb:源知识" in docs

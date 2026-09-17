@@ -62,6 +62,10 @@ class Result:
                          f"达到最松阈值(0.65)的有 {d.get('above_loosest', 0)} 条")
         if d.get("fts_hits"):
             lines.append(f"· 关键词(FTS) 命中 {d['fts_hits']} 条但都被标签/预算过滤了 —— 换更具体的名词再试")
+        if d.get("procedure_skipped"):
+            lines.append(f"· 另有 {d['procedure_skipped']} 条**程序性内容**（技能正文）被默认跳过 ——"
+                         f"它们是「照做会改变行为」的指令，只该显式加载；确实要一起看就加 "
+                         f"`--include-procedure`（MCP 传 `include_procedure: true`）")
         lines.append("· 可换招：① 换措辞（同义词/术语）② 放宽 --n ③ 用 --tag domain:xxx 收窄 "
                      "④ 直接 `aml recall --grep 关键词` 翻原文")
         return "\n".join(lines)
@@ -142,7 +146,8 @@ class Retriever:
 
     # ---------------- 检索主流程 ----------------
     def search(self, query: str, phase: str = "P2", project: str | None = None,
-               tag: str | None = None, n: int | None = None, allow_repeat: bool = False) -> Result:
+               tag: str | None = None, n: int | None = None, allow_repeat: bool = False,
+               include_procedure: bool = False) -> Result:
         phase = (phase or "P2").upper()
         spec = self.cfg.phase(phase)
         limit = int(n or spec.get("results", 5))
@@ -152,7 +157,8 @@ class Retriever:
         margin = float(self.retrieval.get("rel_margin", 0.07))
 
         diag: dict = {"phase": phase, "candidates": 0, "top": None, "tier_used": None,
-                      "above_loosest": tiers[-1] if tiers else 0.65, "fts_hits": 0}
+                      "above_loosest": tiers[-1] if tiers else 0.65, "fts_hits": 0,
+                      "procedure_skipped": 0}
         if query and not allow_repeat and self.is_repeat(phase, query):
             diag["cooldown_skipped"] = True
             return Result(phase, [], 0, budget, [], diag)
@@ -162,6 +168,13 @@ class Retriever:
         except MemoryAPIError:
             diag["service_down"] = True
             return Result(phase, [], 0, budget, [], diag)
+
+        # 程序性内容（技能正文等）默认不进检索：它是"照做会改变行为"的指令，
+        # 只该被显式加载，不该因为语义相关就自动进上下文（见 docs/TRUST-MODEL.md）。
+        if not include_procedure:
+            kept = [(s, m) for s, m in cand if "kind:procedure" not in (m.get("tags") or [])]
+            diag["procedure_skipped"] += len(cand) - len(kept)
+            cand = kept
 
         diag["candidates"] = len(cand)
         diag["top"] = round(cand[0][0], 3) if cand else None
@@ -181,6 +194,10 @@ class Retriever:
         kw_pool = []
         if (not pool or len(pool) < limit) and query:
             kw_pool = [(0.0, m) for m in self.keyword(query, limit)]
+            if not include_procedure:
+                kept = [(s, m) for s, m in kw_pool if "kind:procedure" not in (m.get("tags") or [])]
+                diag["procedure_skipped"] += len(kw_pool) - len(kept)
+                kw_pool = kept
             diag["fts_hits"] = len(kw_pool)
 
         if not pool and not kw_pool:

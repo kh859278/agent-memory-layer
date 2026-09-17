@@ -89,7 +89,8 @@ def cmd_sync(args):
 def cmd_search(args):
     cfg = _cfg(args)
     result = Retriever(cfg).search(args.query, phase=args.phase, project=args.project,
-                                   tag=args.tag, n=args.n, allow_repeat=args.allow_repeat)
+                                   tag=args.tag, n=args.n, allow_repeat=args.allow_repeat,
+                                   include_procedure=args.include_procedure)
     print(result.render())
     if args.explain:
         print("\n诊断：" + json.dumps(result.diag, ensure_ascii=False))
@@ -347,6 +348,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tag", help="收窄标签，如 domain:env-windows")
     sp.add_argument("-n", type=int, help="覆盖该阶段的条数上限")
     sp.add_argument("--allow-repeat", action="store_true", help="忽略同查询冷却")
+    sp.add_argument("--include-procedure", action="store_true",
+                    help="把「程序性内容」（技能正文）也纳入检索；默认跳过——它们只该显式加载")
     sp.add_argument("--explain", action="store_true", help="额外打印诊断信息")
     sp.set_defaults(func=cmd_search)
 

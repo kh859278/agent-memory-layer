@@ -35,8 +35,10 @@ class FakeRetriever:
         self.calls = []
         self.lines = lines if lines is not None else ["[沉淀|env-windows|2026-09-13|0.85] 一条经验"]
 
-    def search(self, query, phase="P2", project=None, tag=None, n=None, allow_repeat=False):
-        self.calls.append({"query": query, "phase": phase, "project": project, "tag": tag, "n": n})
+    def search(self, query, phase="P2", project=None, tag=None, n=None, allow_repeat=False,
+               include_procedure=False):
+        self.calls.append({"query": query, "phase": phase, "project": project, "tag": tag, "n": n,
+                           "allow_repeat": allow_repeat, "include_procedure": include_procedure})
         return FakeResult(list(self.lines))
 
 
