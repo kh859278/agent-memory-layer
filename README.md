@@ -145,6 +145,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml mcp` | 起 MCP server（stdio JSON-RPC），把检索/写回/播报/体检暴露给任何 MCP 客户端 |
 | `aml patrol run` | 技能治理一轮：纳管 → 更新 → 镜像入库 → 包版本 → 写播报队列 |
 | `aml patrol check` / `update` | 比上游 commit：**干净的自动更新，本地改过的只暂存**（`--deep` 用内容指纹兜底） |
+| `aml patrol diff` | 采纳前审阅：正文 diff + **新增能力信号**（网络/shell/密钥/写文件/git 写）；`--fail-on-risk` 可做门禁 |
 | `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
 | `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份） |
 | `aml patrol packages` | 包版本监控（只监控不升级，附 release notes 摘要） |

@@ -195,6 +195,22 @@ def cmd_patrol_run(cfg, args, log=print) -> int:
     return 0
 
 
+def cmd_patrol_diff(cfg, args, log=print) -> int:
+    """看"上游/已暂存版到底改了什么"：正文 diff + 新增能力信号（网络/shell/密钥/写文件…）。"""
+    from .patrol import diff as diff_mod
+    report = diff_mod.collect(cfg, name=getattr(args, "name", None),
+                              pending_only=not getattr(args, "fetch", False), log=log,
+                              max_lines=getattr(args, "max_lines", 40))
+    if getattr(args, "json", False):
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(diff_mod.render(report))
+    if getattr(args, "fail_on_risk", False) and diff_mod.risky(report):
+        log("⚠ 存在新增高风险能力信号（--fail-on-risk 生效，退出码 2）")
+        return 2
+    return 0
+
+
 def dt_now() -> str:
     import datetime as dt
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -202,4 +218,4 @@ def dt_now() -> str:
 
 __all__ = ["cmd_patrol_sync", "cmd_patrol_adopt", "cmd_patrol_check", "cmd_patrol_update",
            "cmd_patrol_accept", "cmd_patrol_packages", "cmd_patrol_notify", "cmd_patrol_run",
-           "github", "skills", "update", "packages"]
+           "cmd_patrol_diff", "github", "skills", "update", "packages"]

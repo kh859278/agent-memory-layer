@@ -432,6 +432,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-notify", action="store_true")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_update(_cfg(args), args))
 
+    sp = psub.add_parser("diff", help="看上游/暂存版改了什么（正文 diff + 新增能力信号）")
+    sp.add_argument("name", nargs="?", help="只审某个技能（默认审全部待审的）")
+    sp.add_argument("--fetch", action="store_true",
+                    help="没有暂存版时去上游取快照再比（联网；默认只看已暂存的）")
+    sp.add_argument("--max-lines", type=int, default=40, help="diff 片段行数上限")
+    sp.add_argument("--fail-on-risk", action="store_true",
+                    help="出现新增高风险能力信号时退出码 2（可作门禁）")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_diff(_cfg(args), args))
+
     sp = psub.add_parser("accept", help="采纳暂存的上游版本（覆盖本地，先备份）")
     sp.add_argument("name", nargs="?", help="技能名")
     sp.add_argument("--all", action="store_true", help="全部采纳")

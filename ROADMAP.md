@@ -78,8 +78,12 @@
       deprecated → disabled → retired`（现在只有 tracked / clean / modified / staged）
 - [ ] **能力声明 + 风险扫描**：`SKILL.md` 旁边加 `skill.yaml`（capabilities: shell/network/
       filesystem/secrets + side_effects + scope + requires_approval），更新时做**能力差异**而不是只看 commit
-- [ ] **`patrol diff`**：把"上游改了什么"摆出来（正文 diff + 新增的能力/网络调用/危险指令），
-      这是把"更新治理"升级成"治理"的关键一步
+- [x] **`patrol diff`**：`accept` 之前看清"上游改了什么" —— 文件级增删改 + 正文统一 diff +
+      **能力信号差异**（网络请求 / shell 调用 / 读密钥 / 写删文件 / git 写操作 / 装依赖 / 浏览器
+      自动化；裸链接单列"留意"）。默认**不联网**（审已暂存的 `_pending/`），`--fetch` 才去上游取快照；
+      `--fail-on-risk` 在有新增高风险信号时退出码 2（可做门禁）
+      —— 实测教训：第一版把 Markdown 引用块 `>` 当成写文件、行内反引号当成 shell，
+      这种"狼来了"等于没有信号，已收紧成**只认可执行的调用形态**（并加了回归测试）
 - [ ] **来源可信度**：记录 repo/ref/commit/sha256/publisher，支持"只信白名单来源"
 
 ### 3.4 工程与可复现
