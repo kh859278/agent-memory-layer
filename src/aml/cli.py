@@ -258,9 +258,47 @@ def cmd_denoise(args):
 # --------------------------------------------------------------------- 解析
 
 def cmd_feedback(args):
-    """给一条记忆打点：worked / failed / used（让"被召回"与"有用"分开计分）。"""
+    """给记忆打点：worked / failed / used（让"被召回"与"有用"分开计分）。
+
+    三种用法：
+      · `--hash H --outcome X`            已知 hash（MCP / 脚本用）
+      · `--last 1 --outcome X`            给**最近那次检索**注入的记忆打点（账本当依据）
+      · `--list [N]`                      看最近几次注入了什么（拿不准就 --dry-run 先看）
+    """
     cfg = _cfg(args)
-    from . import feedback
+    from . import feedback, recall_log
+    if getattr(args, "list", None) is not None:
+        print(recall_log.render(recall_log.tail(cfg, args.list)))
+        return 0
+    if getattr(args, "last", 0):
+        targets = recall_log.resolve(cfg, args.last)
+        if not targets:
+            print("召回账本里没有可打点的记录（先检索一次，或直接用 --hash）", file=sys.stderr)
+            return 1
+        print(f"最近 {args.last} 次召回里共有 {len(targets)} 条记忆：")
+        for h, event in targets.items():
+            print(f"  {h}  ← {(event.get('query') or '')[:40]}")
+        if args.dry_run:
+            print("（--dry-run：没有真的打点）")
+            return 0
+        ok, failed = 0, []
+        for h in targets:
+            try:
+                info = feedback.record(cfg, h, args.outcome, note=args.note or "",
+                                       log=lambda *_a, **_k: None)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            if info.get("ok"):
+                ok += 1
+            else:
+                failed.append(h)
+        print(f"已记录 {args.outcome}：{ok}/{len(targets)} 条"
+              + (f"，失败 {len(failed)} 条：{', '.join(failed[:5])}" if failed else ""))
+        return 0 if ok else 1
+    if not args.hash:
+        print("需要 --hash <hash> 或 --last <N>（先 `aml feedback --list` 看看）", file=sys.stderr)
+        return 2
     try:
         info = feedback.record(cfg, args.hash, args.outcome, note=args.note or "")
     except ValueError as e:
@@ -509,9 +547,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_review)
 
     sp = sub.add_parser("feedback", help="记忆质量反馈：worked / failed / used（影响同档位排序）")
-    sp.add_argument("--hash", required=True, help="记忆的 content_hash")
-    sp.add_argument("--outcome", required=True, choices=["worked", "failed", "used"])
+    sp.add_argument("--hash", help="记忆的 content_hash（也可以改用 --last）")
+    sp.add_argument("--outcome", choices=["worked", "failed", "used"], default="used",
+                    help="worked=帮上忙 / failed=导致返工 / used=只是被用过")
     sp.add_argument("--note", help="可选备注（存在 metadata.last_note）")
+    sp.add_argument("--last", type=int, default=0,
+                    help="给最近 N 次检索注入的记忆打点（按召回账本，免去抄 hash）")
+    sp.add_argument("--list", nargs="?", const=5, type=int,
+                    help="看最近几次检索注入了哪些记忆（不带数字默认 5 次）")
+    sp.add_argument("--dry-run", action="store_true", help="配合 --last：只列出来不打点")
     sp.set_defaults(func=cmd_feedback)
 
     sp = sub.add_parser("denoise", help="降噪：找出界面回显/纯确认语（默认只预览）")

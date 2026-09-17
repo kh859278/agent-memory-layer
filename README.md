@@ -140,6 +140,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
 | `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延，`--verify <hash>` 人工确认仍成立 |
 | `aml feedback --hash H --outcome worked\|failed\|used` | 质量反馈：让"被召回"与"有用"分开计分，影响同档位排序（没数据的记忆不受惩罚） |
+| `aml feedback --last 1 --outcome worked` | 给**最近这次检索**注入的记忆打点（依据是召回账本，不用抄 hash；`--list` 先看、`--dry-run` 预演） |
 | `aml migrate procedure` | 存量迁移：给已灌进库的技能正文补打 `kind:procedure`（默认只预览，可回滚） |
 | `aml bench --tasks FILE` | 检索基准：memory ON/OFF 对照（入口命中率 + 平均注入字数；**不是**任务成功率） |
 | `aml bench --task-level` | **任务级基准**：真起 agent 跑同一批任务两遍（有记忆/无记忆），判成败并统计成功率、返工、耗时、token、被记忆带偏率、既有功能回退率（`--feedback` 顺手回写反馈；有回退/违禁则退出码非 0，可当门禁） |

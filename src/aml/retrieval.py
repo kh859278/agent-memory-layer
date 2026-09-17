@@ -282,7 +282,19 @@ class Retriever:
 
         if query and not allow_repeat:
             self.mark(phase, query)
+        self._log_recall(phase, query, hashes, used, project)
         return Result(phase, lines, used, budget, layers, diag, hashes)
+
+    def _log_recall(self, phase, query, hashes, used, project) -> None:
+        """记召回账本（失败不影响检索）：这样"刚才注入了哪几条"事后可查、反馈指得准。"""
+        if not self.retrieval.get("log_recalls", True):
+            return
+        try:
+            from . import recall_log
+            recall_log.record(self.cfg, phase=phase, query=query, hashes=hashes,
+                              chars=used, project=project)
+        except Exception:  # noqa: BLE001 - 记账是附属功能，绝不能拖垮检索
+            pass
 
     # ---------------- 体检 ----------------
     def diagnostics(self) -> dict:
