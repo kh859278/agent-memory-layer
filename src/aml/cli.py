@@ -305,6 +305,26 @@ def cmd_migrate(args):
     return 0
 
 
+def cmd_bench(args):
+    """检索基准：memory ON vs OFF（口径是入口覆盖率与上下文成本，不是任务成功率）。"""
+    import os
+
+    cfg = _cfg(args)
+    from . import bench
+    path = args.tasks or bench.default_task_path(cfg)
+    if not os.path.isfile(path):
+        print(f"找不到任务表：{path}\n"
+              f"格式见 tools/bench/tasks.example.jsonl（复制到该路径后按你的项目改）", file=sys.stderr)
+        return 2
+    tasks = bench.load_tasks(path)
+    print(f"任务表：{path}（{len(tasks)} 个任务）")
+    report = bench.evaluate(cfg, tasks, log=None if args.quiet else print)
+    print(bench.render(report))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report["on"]["hit_rate"] >= args.min_hit_rate else 1
+
+
 def cmd_mcp(args):
     """把记忆层以 MCP server 形式暴露（stdio JSON-RPC）。"""
     from .mcp_server import serve
@@ -522,6 +542,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("mcp", help="起 MCP server（stdio JSON-RPC），把记忆层暴露给任何 MCP 客户端")
     sp.set_defaults(func=cmd_mcp)
+
+    sp = sub.add_parser("bench", help="检索基准：memory ON vs OFF（入口覆盖率 + 上下文成本）")
+    sp.add_argument("--tasks", help="任务表路径（默认 $AML_HOME/state/bench-tasks.jsonl）")
+    sp.add_argument("--min-hit-rate", type=float, default=0.0,
+                    help="命中率低于该值时退出码 1（可做回归门禁）")
+    sp.add_argument("--quiet", action="store_true")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_bench)
 
     sp = sub.add_parser("migrate", help="存量迁移（给已灌进库的程序性内容补打 kind:procedure，可回滚）")
     sp.add_argument("action", choices=["procedure", "rollback"], nargs="?", default="procedure")

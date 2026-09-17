@@ -108,14 +108,22 @@
 
 ## Step 4 传播与验证（发布后）
 
-- [ ] **基准对比**：`memory ON/OFF` + `skill governance ON/OFF`，量任务成功率、返工次数、
-      到解时间、token 消耗、错误记忆率、技能回退率。**没有这个，README 的定位就只是主张**
+- [x] **基准（检索层）**：`aml bench --tasks <任务表>` —— memory ON/OFF 对照，量
+      **入口命中率**与**平均注入字数**（`--min-hit-rate` 可做回归门禁）。
+      本机首跑：12 个任务（查询取自已沉淀知识）**12/12 命中，平均注入 421 字**。
+      ⚠️ 说清口径：这一层证明"入口覆盖得住、上下文不贵"，**不等于**任务成功率；
+      首跑用的是标题当查询（偏易），真实评估应写**改写过的问法**。
+      任务表放 `$AML_HOME/state/bench-tasks.jsonl`（不进仓库），模板见 `tools/bench/tasks.example.jsonl`
+- [ ] **基准（任务层，真正的下一步）**：需要一个 agent harness —— 同一批任务跑两遍
+      （有记忆 / 无记忆），判成败并统计：任务成功率、返工次数、到解时间、token 消耗、
+      错误记忆率、技能回退率。这是把 README 的定位从"主张"变成"可验证"的关键
 - [ ] **一条命令接入**：`pipx install` + `aml init` 后自动发现各 agent、首次 sync、首次 recall
       （目标是 10 分钟内完成第一次成功召回）
 - [ ] `aml memories` / `aml why <hash>`：让人能看见"库里有什么、为什么召回它"
 - [ ] **定位收敛**：一句话从"另一个 agent memory"改成
       **"coding agent 的记忆 + 技能治理"**（README 首屏按这个重写）
-- [ ] 技能治理独立成小项目（`skill-patrol`：受众明确，撞车概率低）
+- [ ] 技能治理独立成小项目（已建预留仓 [`skill-patrol`](https://github.com/kh859278/skill-patrol)，
+      待依赖解耦后搬迁）
 - [ ] 跨 agent 时间轴的"如何新增 adapter"文档（最容易吸引贡献者的接口）
 
 ## 发布前 checklist
