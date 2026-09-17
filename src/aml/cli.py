@@ -220,7 +220,11 @@ def cmd_export(args):
 
 def cmd_review(args):
     cfg = _cfg(args)
-    from . import maintenance
+    from . import feedback, maintenance
+    if getattr(args, "verify", None):
+        info = feedback.verify(cfg, args.verify, days=args.days)
+        print(json.dumps(info, ensure_ascii=False))
+        return 0 if info.get("ok") else 1
     if args.postpone:
         info = maintenance.postpone(cfg, args.postpone, days=args.days)
         print(json.dumps(info, ensure_ascii=False))
@@ -252,6 +256,54 @@ def cmd_denoise(args):
 
 
 # --------------------------------------------------------------------- 解析
+
+def cmd_feedback(args):
+    """给一条记忆打点：worked / failed / used（让"被召回"与"有用"分开计分）。"""
+    cfg = _cfg(args)
+    from . import feedback
+    try:
+        info = feedback.record(cfg, args.hash, args.outcome, note=args.note or "")
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if not info.get("ok"):
+        print(f"失败：{info.get('error')}", file=sys.stderr)
+        return 1
+    print(f"已记录：{info['outcome']}（usage {info['meta']['usage_count']}，"
+          f"可靠度 {feedback.reliability(info['meta'])}）")
+    return 0
+
+
+def cmd_migrate(args):
+    """存量迁移：给已灌进库的"程序性内容"补打 kind:procedure。"""
+    cfg = _cfg(args)
+    from . import migrate
+    if args.action == "rollback":
+        if not args.file:
+            print("需要 --file <快照路径>", file=sys.stderr)
+            return 2
+        info = migrate.rollback(cfg, args.file)
+        print(f"已回滚：恢复 {info['restored']} 条，删除 {info['removed']} 条带标签版")
+        return 0
+
+    if not args.apply:
+        info = migrate.plan(cfg, limit=args.limit)
+        print(f"程序性目录 {info['dirs']}：共 {info['total']} 条，已带 kind:procedure {info['tagged']} 条，"
+              f"待迁移 {info['pending']} 条")
+        print("（预览模式，未改动任何数据。说明：检索层已经按目录兜住了这些内容，"
+              "迁移的意义是让数据本身带上标签；确认后加 --apply）")
+        return 0
+
+    def progress(done, total, ok, failed, speed):
+        print(f"   {done}/{total}  成功 {ok} 失败 {failed}  {speed:.1f} 条/秒", flush=True)
+
+    info = migrate.apply(cfg, limit=args.limit, progress=progress)
+    print(f"迁移完成：{info['migrated']} 条成功，{info['failed']} 条失败，用时 {info.get('seconds')}s")
+    if info.get("snapshot"):
+        print(f"快照：{info['snapshot']}（回滚：aml migrate rollback --file <该文件>）")
+        print("建议接着重建可读副本：aml distill --rebuild-md")
+    return 0
+
 
 def cmd_mcp(args):
     """把记忆层以 MCP server 形式暴露（stdio JSON-RPC）。"""
@@ -383,11 +435,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=0)
     sp.set_defaults(func=cmd_export)
 
-    sp = sub.add_parser("review", help="知识复核：列到期 / 顺延")
+    sp = sub.add_parser("review", help="知识复核：列到期 / 顺延 / 标记已验证")
     sp.add_argument("--within", type=int, default=0, help="也列出 N 天内到期的")
     sp.add_argument("--postpone", help="把该 hash 的复核期顺延（需配 --days）")
+    sp.add_argument("--verify", help="人工确认该 hash 仍然成立：写 last_verified_at 并顺延复核期")
     sp.add_argument("--days", type=int, default=180)
     sp.set_defaults(func=cmd_review)
+
+    sp = sub.add_parser("feedback", help="记忆质量反馈：worked / failed / used（影响同档位排序）")
+    sp.add_argument("--hash", required=True, help="记忆的 content_hash")
+    sp.add_argument("--outcome", required=True, choices=["worked", "failed", "used"])
+    sp.add_argument("--note", help="可选备注（存在 metadata.last_note）")
+    sp.set_defaults(func=cmd_feedback)
 
     sp = sub.add_parser("denoise", help="降噪：找出界面回显/纯确认语（默认只预览）")
     sp.add_argument("--apply", action="store_true", help="执行软删除（deleted_at，可回滚）")
@@ -463,6 +522,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("mcp", help="起 MCP server（stdio JSON-RPC），把记忆层暴露给任何 MCP 客户端")
     sp.set_defaults(func=cmd_mcp)
+
+    sp = sub.add_parser("migrate", help="存量迁移（给已灌进库的程序性内容补打 kind:procedure，可回滚）")
+    sp.add_argument("action", choices=["procedure", "rollback"], nargs="?", default="procedure")
+    sp.add_argument("--apply", action="store_true", help="真的迁移（默认只预览）")
+    sp.add_argument("--limit", type=int, default=0, help="只处理前 N 条（调试用）")
+    sp.add_argument("--file", help="rollback 用：快照文件路径")
+    sp.set_defaults(func=cmd_migrate)
 
     sp = sub.add_parser("dedup", help="近义知识合并（默认只预览；--apply 才真合并，可回滚）")
     sp.add_argument("--apply", action="store_true", help="执行合并（先备份整簇，可 --rollback）")

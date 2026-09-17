@@ -18,7 +18,9 @@ import os
 import re
 import sqlite3
 
+from .feedback import rank_factor, reliability
 from .http import MemoryAPIError, MemoryClient
+from .migrate import is_procedure
 
 JUNK_TAGS = ("kind:task", "kind:reply")   # 会话流水：噪声大，只作为最后兜底
 FTS_MIN_TERM = 2
@@ -77,6 +79,9 @@ class Retriever:
         self.retrieval = cfg.section("retrieval")
         self.client = client or MemoryClient(cfg.api)
         self.state_file = cfg.state_dir / "lookup_state.json"
+        # 程序性目录（技能正文等）：这些目录来的记录即使还没打 kind:procedure 标签，
+        # 也一律按程序性内容对待 —— 存量没迁移也不会漏（见 docs/TRUST-MODEL.md）
+        self.procedure_dirs = list(cfg.section("ingest").get("procedure_dirs") or [])
 
     # ---------------- 去重（同阶段同查询 10 分钟内不重查） ----------------
     def _load_state(self) -> dict:
@@ -171,8 +176,10 @@ class Retriever:
 
         # 程序性内容（技能正文等）默认不进检索：它是"照做会改变行为"的指令，
         # 只该被显式加载，不该因为语义相关就自动进上下文（见 docs/TRUST-MODEL.md）。
+        # 判据两个都认：`kind:procedure` 标签（新数据）与 `kb:<程序性目录>`（历史数据）——
+        # 这样存量没迁移也不漏。
         if not include_procedure:
-            kept = [(s, m) for s, m in cand if "kind:procedure" not in (m.get("tags") or [])]
+            kept = [(s, m) for s, m in cand if not is_procedure(m, self.procedure_dirs)]
             diag["procedure_skipped"] += len(cand) - len(kept)
             cand = kept
 
@@ -190,12 +197,17 @@ class Retriever:
             top = pool[0][0]
             pool = [(s, m) for s, m in pool if s >= max(tier_used, top - margin)]
 
+        # 同档位内按"可靠度"重排：被用过且有效的排前面，没数据的**不惩罚**（系数 1.0）。
+        # 只在档位内动顺序，不改分数门槛 —— 否则一条高分新记忆会因"还没被用过"被挤出结果。
+        if pool:
+            pool = sorted(pool, key=lambda item: -(item[0] * rank_factor(item[1].get("metadata") or {})))
+
         # 关键词兜底：语义没命中（或命中太少）时才用，且排在最后
         kw_pool = []
         if (not pool or len(pool) < limit) and query:
             kw_pool = [(0.0, m) for m in self.keyword(query, limit)]
             if not include_procedure:
-                kept = [(s, m) for s, m in kw_pool if "kind:procedure" not in (m.get("tags") or [])]
+                kept = [(s, m) for s, m in kw_pool if not is_procedure(m, self.procedure_dirs)]
                 diag["procedure_skipped"] += len(kw_pool) - len(kept)
                 kw_pool = kept
             diag["fts_hits"] = len(kw_pool)
@@ -258,7 +270,10 @@ class Retriever:
             if review_after and review_after < dt.date.today().isoformat():
                 stale = f"⚠已过复核期({review_after})，先用前复核 "
             score = f"{s:.2f}" if s else "kw"
-            lines.append(f"[{layer}|{domain}|{stamp}|{score}] {stale}{content[:result_chars]}")
+            # 只有真的有使用数据时才显示可靠度，避免给每条都挂个没意义的 1.00
+            rel = reliability(meta)
+            rel_text = f"|rel {rel:.2f}" if rel is not None else ""
+            lines.append(f"[{layer}|{domain}|{stamp}|{score}{rel_text}] {stale}{content[:result_chars]}")
             if used >= budget:
                 break
 

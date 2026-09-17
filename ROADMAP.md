@@ -54,9 +54,11 @@
 - [x] **技能内容不得默默进入通用检索**：`kb.ingest_docs` 对 `ingest.procedure_dirs`（默认 `技能原始`）
       里的文档打 `kind:procedure` + `authority:procedure`；`Retriever.search` 默认过滤掉它们，
       `--include-procedure` / MCP `include_procedure: true` 才返回；未命中时明确说明"有 N 条程序性内容被跳过"
-- [ ] **存量迁移**：已经灌进库的技能块（`kb:技能原始`，无 `kind:procedure`）还没重打标签。
-      重灌会因标签进 hash 而产生新记录、旧记录成孤儿 → 需要一次**带回滚的迁移**
-      （重灌 + 用 `backfill-embeddings --prune-orphans` 类似口径清旧），别裸跑
+- [x] **存量迁移**：`aml migrate procedure`（默认只预览）。要点：服务的 content_hash **把标签算进去了**，
+      所以迁移 = **重存 + 删旧**；重存必须带 `conversation_id`（否则被判重复而拒收）；
+      先写整批快照，可 `aml migrate rollback --file <快照>`。本机规模：2804 块技能内容。
+      另外**检索层同时认 `kb:<程序性目录>`**，所以即使一块都没迁移，技能正文也不会被自动召回——
+      迁移的意义是让数据本身带上标签（给别的消费者/导出看），不是安全兜底的唯一依赖
 - [ ] **authority 维度**：检索排序目前只有 `语义分 × 阶段预算 × 层级`。
       加入 `authority`（谁写的：人审 / 蒸馏 / 会话原文 / 技能）与 `freshness`，并在输出前缀里显示
 - [ ] **写权限分层**：MCP `store` 目前 agent 可自由写 `kind:knowledge`。
@@ -66,8 +68,13 @@
 
 ### 3.2 记忆质量闭环（现在只有 review_after，没有反馈）
 
-- [ ] **outcome 反馈**：`usage_count / success_count / failure_count / last_used_at /
-      last_verified_at`，让"被召回"与"有用"分开计分；排序乘上 reliability
+- [x] **outcome 反馈（核心）**：`aml feedback --hash H --outcome worked|failed|used`（MCP 也有 `feedback` 工具），
+      字段 `usage_count / success_count / failure_count / last_used_at / last_failed_at`；
+      可靠度用拉普拉斯平滑（1 次成功 ≠ 满分），
+      **只在同档位内重排**（分数门槛不动，新记忆不因"没用过"被挤出，失败记忆不消失只降权）；
+      `review --verify <hash>` 写 `last_verified_at` 并顺延复核期
+- [ ] **反馈的自动采集**：现在要 agent 显式打点。下一步：从任务结果里推断（P6 写回时顺带更新），
+      或让 `aml watch` 在会话结束时按"是否复用了某条记忆"自动打 `used`
 - [ ] **否定记忆与冲突关系**：`supersedes / contradicts / deprecated_by`。
       现状只有"以时间较新为准"的合并口径，缺显式建模（否则"用 Redis"和"别用 Redis"会同时命中）
 - [ ] **统一 ChangeSet 回滚**：skill 更新、镜像、索引、通知队列目前各自回滚，容易只回滚一半

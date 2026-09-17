@@ -110,6 +110,11 @@ class MemoryClient:
                 return
             page += 1
 
+    def get(self, content_hash: str) -> dict:
+        """按 hash 取一条记忆（后端不一定有这个端点，取不到会抛 MemoryAPIError）。"""
+        from urllib.parse import quote
+        return self._request(f"/api/memories/{quote(content_hash, safe='')}", None, method="GET")
+
     def delete(self, content_hash: str) -> dict:
         from urllib.parse import quote
         return self._request(f"/api/memories/{quote(content_hash, safe='')}", {}, method="DELETE")

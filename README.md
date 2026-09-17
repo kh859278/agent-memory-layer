@@ -138,7 +138,9 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml index rebuild` | 重建知识库索引（索引会腐化，`doctor` 会告警） |
 | `aml backup` / `aml restore` | 在线备份（按天保留）/ **从备份恢复**（默认预检，`--yes` 才写，且先自动另存现有库） |
 | `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
-| `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延 |
+| `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延，`--verify <hash>` 人工确认仍成立 |
+| `aml feedback --hash H --outcome worked\|failed\|used` | 质量反馈：让"被召回"与"有用"分开计分，影响同档位排序（没数据的记忆不受惩罚） |
+| `aml migrate procedure` | 存量迁移：给已灌进库的技能正文补打 `kind:procedure`（默认只预览，可回滚） |
 | `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
 | `aml dedup` | 近义知识合并（默认只预览；`--apply` 才合并，**整簇快照可 `--rollback`**） |
 | `aml backfill-embeddings` | 补齐**缺向量**的记录（缺向量 = 语义检索永远搜不到），`--prune-orphans` 清重复孤儿 |
@@ -295,8 +297,13 @@ schtasks /Create /TN "aml-patrol" /SC DAILY /ST 09:30 ^
 技能本身。混在一起检索是要出事的 —— 一条知识错了顶多给错信息，一条**指令**错了会直接改变 agent 的行为。
 
 所以：跨项目知识进沉淀层最优先；程序性内容打 `kind:procedure` 并**默认不参与检索**
-（只该被显式加载）；技能靠 `patrol` 管版本与覆盖保护。细节与"谁能写哪一层"见
-[`docs/TRUST-MODEL.md`](docs/TRUST-MODEL.md)。
+（只该被显式加载；历史数据按 `kb:<程序性目录>` 兜住，不依赖标签有没有迁移）；
+技能靠 `patrol` 管版本与覆盖保护。
+
+**记忆质量也会反馈**：用完一条记忆可以打点（`worked` / `failed` / `used`），
+可靠度（拉普拉斯平滑的成功率）**只在同档位内重排**——不改分数门槛，
+所以新记忆不会因为"还没被用过"被挤出结果，屡次失败的记忆也不会消失（只降权）。
+细节与"谁能写哪一层"见 [`docs/TRUST-MODEL.md`](docs/TRUST-MODEL.md)。
 
 ## 隐私与安全
 

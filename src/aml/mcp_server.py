@@ -79,6 +79,20 @@ TOOLS = [
             "phase": {"type": "string", "description": "留空返回全部阶段"}}},
     },
     {
+        "name": "feedback",
+        "description": ("告诉你用过的这条记忆到底有没有帮上忙：worked / failed / used。"
+                        "计数会影响同档位内的排序（没数据的记忆不受惩罚）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "hash": {"type": "string", "description": "记忆的 content_hash（search 结果里能看到来源）"},
+                "outcome": {"type": "string", "enum": ["worked", "failed", "used"]},
+                "note": {"type": "string", "description": "可选：一句话说明（比如失败原因）"},
+            },
+            "required": ["hash", "outcome"],
+        },
+    },
+    {
         "name": "brief",
         "description": "取一句 ≤100 字的「技能/依赖这几轮新增或更新了什么」；没有变化时返回空串。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -210,6 +224,15 @@ class Server:
             if not rows:
                 return f"没有这个阶段：{wanted}（或配置里没定义）"
             return "阶段定义（完整协议见 docs/PROTOCOL.md）：\n" + "\n".join(rows)
+
+        if name == "feedback":
+            from .feedback import record, reliability
+            info = record(self.cfg, args["hash"], args["outcome"], note=args.get("note") or "",
+                          client=self.client)
+            if not info.get("ok"):
+                raise ValueError(info.get("error") or "记录失败")
+            return (f"已记录 {info['outcome']}（usage {info['meta']['usage_count']}，"
+                    f"可靠度 {reliability(info['meta'])}）")
 
         if name == "brief":
             text = self.notices.brief()
