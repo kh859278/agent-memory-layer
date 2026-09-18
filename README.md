@@ -156,6 +156,12 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml patrol sources` | 来源：多仓库来源 + **仓库布局识别**（root/standard/template/flat/nested），替掉"猜上游" |
 | `aml patrol install NAME...` | 从来源**装技能**：按布局取、装到该作用域所有活目录；覆盖前先备份，`--dry-run` 可预演 |
 | `aml patrol uninstall NAME...` | **卸载技能**：先备份再删（永远能从 `_backup/` 回滚） |
+| `aml patrol status` | 状态总览：已纳管 / 本地有改动 / 待批暂存 / 未纳管，一行一个技能 |
+| `aml patrol lock --write` | 导出 **`skills-lock.json`**（来源/提交/装在哪/指纹）：给别的工具和别的机器看 |
+| `aml patrol profile save/list` | profile：技能集 + 作用域的可复现清单（`install --profile X` 一条命令复现整套） |
+| `aml patrol config push/pull` | 配置同步：profile 推到远端/从远端拉（本地路径或 git 仓库；同名 profile 冲突不覆盖） |
+| `aml patrol ui` | **只读本地视图**：作用域/来源/生命周期/待批/最近报告 → 一页静态 HTML（不含技能正文） |
+| `aml self-update` | 自查更新：默认**只查不装**；先查 PyPI 并**校验归属**，不是我们的包就退查 git tag（`--source git`） |
 | `aml patrol lifecycle` | 技能生命周期状态机：看状态 / 改状态（只允许合法迁移，越级要 `--force` 并留痕）；**只有 approved/active 允许自动更新** |
 | `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
 | `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份） |

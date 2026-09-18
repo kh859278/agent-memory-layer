@@ -136,6 +136,15 @@
 - [x] **仓库快照缓存**：tarball 落在 `state/patrol/_cache/`，TTL（默认 900s）内不重复下载，
       `--force-refresh` 跳过；解包永远到新的临时目录（调用方 `rmtree` 不会误删缓存）。
       定时任务从"每轮每仓库都下几 MB"变成"TTL 内零下载"
+- [x] **锁文件与状态总览**：`aml patrol lock [--write]` 导出 `skills-lock.json`
+      （`lockfileVersion`/生成器/作用域/每个技能的 repo·subdir·commit·content_hash·
+      upstream_hash·local_diff·targets·是否进知识库）—— 对标 `.skill-lock.json` 与
+      biw 的 `skills-lock.json`（后者被扫描器当作"这是个技能项目"的标记）。
+      `aml patrol status` 给人类视图：已纳管/本地改动/待批/未纳管一眼看清。
+      锁文件里**只有元数据与哈希，没有技能正文**（有测试钉着这条）
+- [x] **布局识别补一档 `categorized`**：真实仓库 `mattpocock/skills` 用的是
+      `skills/<类别>/<名>`（如 `skills/engineering/tdd`），原先被笼统报成 `nested`，
+      看报告的人分不清"组织方式"还是"藏在角落"（这是对真机跑 `patrol status` 时发现的）
 - [ ] **后端契约固定**：`mcp-memory-service` 的 API/schema/嵌入模型版本写进 doctor 与文档
       （现在只有 `db_path` 与 API 地址，后端悄悄变会导致检索语义漂移而 AML 看不出来）
 - [ ] **蒸馏前脱敏**：`dirty→LLM` 目前直发会话原文；`scrub_check` 只管仓库内容泄漏，
@@ -185,4 +194,18 @@
 - [ ] 跑一遍 `python tools/scrub_check.py --all` 确认连被忽略的文件里也没有内容
 - [ ] 仓库 description 与 topics（`ai-agents` `memory` `mcp` `claude-code` `knowledge-base`）；
       **建议加 `skill-governance`**（这是差异化所在）
-- [ ] 发布到 PyPI（`pipx install agent-memory-layer` 是 README 里承诺的下一步）
+- [ ] **发布到 PyPI（`pipx install agent-memory-layer` 是 README 里承诺的下一步）**
+      ⚠️ **名字已被占用（2026-09-18 实测）**：PyPI 上的 `agent-memory-layer` 是 SAP 的包
+      （"A reusable memory layer for SAP agentic workflows"，0.1.0/0.1.1，2026-04 上传）。
+      所以：① 发布前必须先换名（例如 `agent-memory-layer-aml`），否则发不上去；
+      ② `aml self-update` 已加**归属校验**（PyPI 那份不是我们的就拒绝，退查 git tag）；
+      ③ README 里"pipx install agent-memory-layer"这句话现在是**错的**，换名后同步改
+- [x] **只读本地视图（`aml patrol ui`）**：把作用域/来源/生命周期/待批/最近报告/基准汇总
+      成一个单文件静态 HTML（无外链、无 JS 依赖、**不含技能正文**）。不做交互式 Web UI：
+      这台机器上的入口是 09:30 的计划任务，非交互优先
+- [x] **profile + 配置同步**：`aml patrol profile save/list/show/remove`（技能集 + 作用域），
+      `aml patrol install --profile <名>` 按来源分组复现整套；`aml patrol config push/pull`
+      支持本地路径与 git 仓库两种传输（HTTPS 受主机白名单约束，同名 profile **冲突不覆盖**）
+- [x] **自查更新（`aml self-update`）**：默认只查不装（自升级不可逆，且它是计划任务在跑的东西）；
+      识别 pipx/uv/pip 三种安装方式给对应命令；**归属校验**后发现 PyPI 同名包是别人的，
+      于是 `auto` 会退回查我们自己仓库的 tag

@@ -630,8 +630,37 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, help="brief 字数上限")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_notify(_cfg(args), args))
 
+    sp = psub.add_parser("status", help="技能状态总览：已纳管/本地改动/待批/未纳管")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_status(_cfg(args), args))
+
+    sp = psub.add_parser("profile", help="profile：技能集 + 作用域的可复现清单（非交互复现整套）")
+    sp.add_argument("action", nargs="?", default="list", choices=["list", "save", "show", "remove"])
+    sp.add_argument("name", nargs="?", help="profile 名")
+    sp.add_argument("--scope", help="save 用：从哪个作用域取当前已装技能")
+    sp.add_argument("--project", help="save 用：按项目路径定位作用域")
+    sp.add_argument("--note", help="save 用：一句话说明")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_profile(_cfg(args), args))
+
+    sp = psub.add_parser("config", help="配置同步：profile 推到远端/从远端拉（路径或 git 仓库）")
+    sp.add_argument("action", nargs="?", default="show", choices=["show", "push", "pull"])
+    sp.add_argument("--remote", help="远端：本地路径或 git 仓库 URL")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_config(_cfg(args), args))
+
+    sp = psub.add_parser("lock", help="锁文件：技能来源/提交/装在哪/指纹（给别的工具看）")
+    sp.add_argument("--write", action="store_true", help="真的落盘（默认只读打印）")
+    sp.add_argument("--out", help="指定路径（默认：全局→知识库根，项目→项目根）")
+    sp.add_argument("--scope", help="按作用域写（项目作用域写进项目根）")
+    sp.add_argument("--project", help="按项目路径定位作用域")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_lock(_cfg(args), args))
+
     sp = psub.add_parser("install", help="装技能：从来源仓库按布局取，装进作用域的目标目录")
-    sp.add_argument("names", nargs="+", help="技能名（可多个）")
+    sp.add_argument("names", nargs="*", help="技能名（可多个；或用 --profile 装整套）")
+    sp.add_argument("--profile", help="按 profile 装整套（`aml patrol profile save` 生成）")
     sp.add_argument("--scope", help="装到哪个作用域（默认 global）")
     sp.add_argument("--project", help="按项目路径定位作用域（等价于 --scope project:<名>）")
     sp.add_argument("--source", help="只用这个来源（owner/repo 或 owner/repo#subdir）")
@@ -660,7 +689,7 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["list", "add", "remove", "enable", "disable", "detect"])
     sp.add_argument("repo", nargs="?", help="owner/repo（add/remove/enable/disable/detect 用）")
     sp.add_argument("--scope", default="global", help="来源归属的作用域（默认 global）")
-    sp.add_argument("--layout", choices=["auto", "standard", "template", "root", "flat", "nested"],
+    sp.add_argument("--layout", choices=["auto", "standard", "categorized", "template", "root", "flat", "nested"],
                     default="auto", help="仓库布局（auto=自动识别）")
     sp.add_argument("--subdir", help="只认这个子目录下的技能")
     sp.add_argument("--branch", help="跟踪哪个分支（默认仓库默认分支）")
@@ -682,6 +711,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true", help="允许越级迁移（history 里标 forced）")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_lifecycle(_cfg(args), args))
+
+    sp = psub.add_parser("ui", help="只读本地视图：一页静态 HTML 看全状态（不含技能正文）")
+    sp.add_argument("--out", help="输出路径（默认 $AML_HOME/state/patrol/ui/index.html）")
+    sp.add_argument("--print-only", action="store_true", help="打到标准输出，不落盘")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_ui(_cfg(args), args))
+
+    sp = sub.add_parser("self-update", help="自查更新：默认只查不装（--apply 才真升级）")
+    sp.add_argument("--source", choices=["auto", "pypi", "git"], default="auto",
+                    help="查哪里：auto=PyPI（校验归属，不是我们的就退 git tag）/ pypi / git")
+    sp.add_argument("--apply", action="store_true", help="真的执行升级命令（会替换已装代码）")
+    sp.add_argument("--dry-run", action="store_true", help="配合 --apply：只打印将执行的命令")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=lambda args: patrol_cli.cmd_self_update(_cfg(args), args))
 
     sp = sub.add_parser("mcp", help="起 MCP server（stdio JSON-RPC），把记忆层暴露给任何 MCP 客户端")
     sp.set_defaults(func=cmd_mcp)

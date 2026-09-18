@@ -362,8 +362,30 @@ def cmd_patrol_sources(cfg, args, log=print) -> int:
 
 
 def cmd_patrol_install(cfg, args, log=print) -> int:
-    """装技能：从来源仓库按布局取，装进作用域里的目标目录（默认只装到"活的"目录）。"""
+    """装技能：从来源仓库按布局取，装进作用域里的目标目录（默认只装到"活的"目录）。
+
+    两种用法：`aml patrol install tdd grilling`（点名装）或 `--profile <名>`（按 profile 复现整套）。
+    """
     from .patrol import install
+    profile_name = getattr(args, "profile", None)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+    if profile_name:
+        try:
+            total = install.install_from_profile(
+                cfg, profile_name, project=getattr(args, "project", None), dry_run=dry_run,
+                force=force, force_refresh=getattr(args, "force_refresh", False), log=log)
+        except KeyError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        if getattr(args, "json", False):
+            print(json.dumps({k: v for k, v in total.items()}, ensure_ascii=False, indent=2,
+                             default=str))
+        log(f"  profile {profile_name} 结果：新装 {len(total['installed'])}、"
+            f"替换 {len(total['replaced'])}、拦下 {len(total['blocked'])}、"
+            f"失败 {len(total['failed'])}、缺失 {len(total['missing'])}")
+        return 1 if (total["failed"] or total["missing"] or total["blocked"]) else 0
+
     try:
         plan = install.plan_install(cfg, [n for n in (args.names or []) if n],
                                     scope_name=getattr(args, "scope", None),
@@ -377,8 +399,7 @@ def cmd_patrol_install(cfg, args, log=print) -> int:
         print(install.render_plan(plan))
     if getattr(args, "plan_only", False):
         return 0
-    report = install.apply_plan(cfg, plan, dry_run=getattr(args, "dry_run", False),
-                               force=getattr(args, "force", False), log=log)
+    report = install.apply_plan(cfg, plan, dry_run=dry_run, force=force, log=log)
     if getattr(args, "json", False):
         print(json.dumps({k: v for k, v in report.items()}, ensure_ascii=False, indent=2,
                          default=str))
@@ -404,6 +425,161 @@ def cmd_patrol_uninstall(cfg, args, log=print) -> int:
     return 1 if report["missing"] else 0
 
 
+def cmd_patrol_status(cfg, args, log=print) -> int:
+    """状态总览：装了什么、谁有本地改动、谁待批、谁还没纳管。"""
+    from .patrol import lockfile
+    if getattr(args, "json", False):
+        print(json.dumps(lockfile.status_rows(cfg), ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(lockfile.render_status(cfg))
+    return 0
+
+
+def cmd_patrol_lock(cfg, args, log=print) -> int:
+    """锁文件：导出"每个技能从哪来/哪次提交/装在哪/指纹多少"（给别的工具和别的机器看）。"""
+    from .patrol import lockfile, scopes
+    if not getattr(args, "write", False):
+        if getattr(args, "json", False):
+            print(json.dumps(lockfile.build(cfg), ensure_ascii=False, indent=2, default=str))
+            return 0
+        print(lockfile.render_lock(cfg))
+        print("（只读模式。要落盘加 --write，可用 --out 指定路径）")
+        return 0
+    scope = None
+    if getattr(args, "project", None) or getattr(args, "scope", None):
+        try:
+            scope = scopes.resolve(cfg, getattr(args, "scope", None), getattr(args, "project", None))
+        except KeyError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+    path = lockfile.write(cfg, path=getattr(args, "out", None), scope=scope, log=log)
+    if getattr(args, "json", False):
+        print(json.dumps({"path": path}, ensure_ascii=False))
+    return 0
+
+
+def cmd_patrol_profile(cfg, args, log=print) -> int:
+    """profile：把"要哪些技能 + 装到哪个作用域"记成可复现清单（非交互地复现整套技能集）。"""
+    from .patrol import profiles
+    action = getattr(args, "action", None) or "list"
+    if action == "list":
+        if getattr(args, "json", False):
+            print(json.dumps(profiles.load(cfg), ensure_ascii=False, indent=2, default=str))
+            return 0
+        print(profiles.render(cfg))
+        return 0
+    if action == "save":
+        if not args.name:
+            print("需要 profile 名：`aml patrol profile save <名>`", file=sys.stderr)
+            return 2
+        try:
+            profiles.snapshot(cfg, args.name, scope_name=getattr(args, "scope", None),
+                              project=getattr(args, "project", None),
+                              note=getattr(args, "note", "") or "", log=log)
+        except KeyError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        return 0
+    if action == "show":
+        try:
+            profile = profiles.get(cfg, args.name)
+        except KeyError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        if getattr(args, "json", False):
+            print(json.dumps(profile, ensure_ascii=False, indent=2, default=str))
+            return 0
+        print(f"profile {args.name}：作用域 {profile.get('scope')}，"
+              f"{len(profile.get('skills') or {})} 个技能")
+        for source, items in sorted(profiles.groups(profile).items()):
+            print(f"  ← {source or '(未指定来源)'}")
+            for item in sorted(items):
+                print(f"      {item}")
+        return 0
+    if action == "remove":
+        if not profiles.remove(cfg, args.name, log=log):
+            print(f"没有这个 profile：{args.name}", file=sys.stderr)
+            return 2
+        return 0
+    print(f"未知动作：{action}", file=sys.stderr)
+    return 2
+
+
+def cmd_patrol_config(cfg, args, log=print) -> int:
+    """配置同步：把 profile 推到远端 / 从远端拉（路径或 git 仓库）。"""
+    from .patrol import profiles
+    action = getattr(args, "action", None) or "show"
+    remote = getattr(args, "remote", None) or cfg.section("patrol").get("config", {}).get("remote")
+    if action == "show":
+        if getattr(args, "json", False):
+            print(json.dumps(profiles.export(cfg), ensure_ascii=False, indent=2, default=str))
+            return 0
+        print(profiles.render(cfg))
+        print(f"  远端：{remote or '（未配置 patrol.config.remote）'}")
+        return 0
+    if action in ("push", "pull"):
+        if not remote:
+            print("没有远端：`aml patrol config push --remote <路径或 git URL>`，"
+                  "或在配置里写 patrol.config.remote", file=sys.stderr)
+            return 2
+        try:
+            if action == "push":
+                result = profiles.push(cfg, remote, dry_run=getattr(args, "dry_run", False), log=log)
+            else:
+                result = profiles.pull(cfg, remote, dry_run=getattr(args, "dry_run", False), log=log)
+        except PermissionError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        except Exception as e:  # noqa: BLE001 - 网络/凭据问题要给人话，不是堆栈
+            print(f"失败：{type(e).__name__} {str(e)[:200]}", file=sys.stderr)
+            return 1
+        if getattr(args, "json", False):
+            print(json.dumps({k: v for k, v in result.items() if k != "remote"},
+                             ensure_ascii=False, indent=2, default=str))
+        return 0 if result.get("ok") else 1
+    print(f"未知动作：{action}", file=sys.stderr)
+    return 2
+
+
+def cmd_patrol_ui(cfg, args, log=print) -> int:
+    """只读本地视图：把作用域/来源/生命周期/待批/最近报告汇成一页静态 HTML（不含技能正文）。"""
+    from .patrol import ui
+    if getattr(args, "print_only", False):
+        print(ui.render_html(ui.build(cfg)))
+        return 0
+    path = ui.write(cfg, out=getattr(args, "out", None))
+    log(f"  已生成只读视图：{path}")
+    log("  （单文件、无外链、无 JS 依赖；用浏览器直接打开）")
+    return 0
+
+
+def cmd_self_update(cfg, args, log=print) -> int:
+    """自查更新：默认**只查不装**（自升级是不可逆动作，且这台机器上它是计划任务）。
+
+    `--source auto`（默认）先查 PyPI 并**校验归属**：PyPI 上的同名包是别人的（SAP 的），
+    校验不过就退回查我们自己仓库的 tag。
+    """
+    from . import selfupdate
+    source = getattr(args, "source", None) or "auto"
+    report = selfupdate.plan(cfg, source=source)
+    print(selfupdate.render(report))
+    if not getattr(args, "apply", False):
+        if report.get("needs_upgrade"):
+            print("（只查不装。确认要升级再加 --apply —— 它会真的替换已安装的代码）")
+        return 0
+    if not report.get("needs_upgrade"):
+        return 0
+    result = selfupdate.apply(cfg, dry_run=getattr(args, "dry_run", False),
+                              log=lambda m: print(m, flush=True))
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    if not result.get("ok"):
+        print(f"升级失败：{result.get('error') or result.get('rc')}", file=sys.stderr)
+        return 1
+    print("升级完成（下次运行 aml 生效）。技能与记忆层数据不受影响。")
+    return 0
+
+
 def dt_now() -> str:
     import datetime as dt
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -413,4 +589,6 @@ __all__ = ["cmd_patrol_sync", "cmd_patrol_adopt", "cmd_patrol_check", "cmd_patro
            "cmd_patrol_accept", "cmd_patrol_packages", "cmd_patrol_notify", "cmd_patrol_run",
            "cmd_patrol_diff", "cmd_patrol_capabilities", "cmd_patrol_lifecycle",
            "cmd_patrol_scopes", "cmd_patrol_sources", "cmd_patrol_install", "cmd_patrol_uninstall",
+           "cmd_patrol_status", "cmd_patrol_lock", "cmd_patrol_profile", "cmd_patrol_config",
+           "cmd_patrol_ui", "cmd_self_update",
            "github", "skills", "update", "packages"]
