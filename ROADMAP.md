@@ -113,6 +113,29 @@
 
 ### 3.4 工程与可复现
 
+- [x] **作用域（scope）**：`patrol.scopes` 里一个作用域可以是 `global` 或 `project:<名>`，
+      每个作用域自由布置多个技能目录（项目里写相对项目根的路径）。每个目录一个 `sync_kb`：
+      决定"正文要不要也进知识库"（项目里的技能默认**不进**，只在本地）。
+      老配置零改动：没写 `scopes` 就按 `skill_roots` 派生一个 global 作用域。
+      CLI：`aml patrol scopes`
+- [x] **来源模型 + 仓库布局识别**：`state/patrol/sources.json`（repo/scope/layout/subdir/
+      branch/enabled/priority）；布局按 `root`（仓库根就是一个技能）/ `standard`（`skills/<名>`）/
+      `template`/`flat`/`nested`（`plugins/x/skills/<名>`）识别。
+      `adopt` 不再用"目录名命中 ≥3 个就认仓库"的猜法，改成**归一化精确同名**匹配
+      （`Skill-Name` == `skill_name`）——猜错的代价是拿别人的内容覆盖你的文件。
+      CLI：`aml patrol sources list|add|remove|enable|disable|detect --fetch`
+- [x] **安装 / 卸载**（对标 SkillTruck / skill-manager 的核心能力）：
+      `aml patrol install <技能...> [--scope|--project] [--source] [--dry-run] [--force]`
+      / `aml patrol uninstall`。三段式：`plan_install` 只读 → `apply_plan` 才动盘
+      （所以 `--dry-run` 是真的什么都不改）。约定沿用现有安全闸门：**覆盖/卸载前一定先备份**；
+      目标已有同名技能且**本地改动过** → 默认拦下（`--force` 才覆盖）。
+      一个目标失败不影响其它目标（逐个 try）
+- [x] **主机白名单显式化**：`patrol.allowed_hosts`（默认 github/codeload/api/raw 四个主机）。
+      以前"只信 github.com"是隐含在拼 URL 的代码里，现在**可配置、可审计**，
+      非白名单直接拒绝并说清怎么加；仓库标识必须是 `owner/repo`（不接受 URL）
+- [x] **仓库快照缓存**：tarball 落在 `state/patrol/_cache/`，TTL（默认 900s）内不重复下载，
+      `--force-refresh` 跳过；解包永远到新的临时目录（调用方 `rmtree` 不会误删缓存）。
+      定时任务从"每轮每仓库都下几 MB"变成"TTL 内零下载"
 - [ ] **后端契约固定**：`mcp-memory-service` 的 API/schema/嵌入模型版本写进 doctor 与文档
       （现在只有 `db_path` 与 API 地址，后端悄悄变会导致检索语义漂移而 AML 看不出来）
 - [ ] **蒸馏前脱敏**：`dirty→LLM` 目前直发会话原文；`scrub_check` 只管仓库内容泄漏，

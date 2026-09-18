@@ -98,6 +98,18 @@ DEFAULTS: dict = {
         # 兜底找上游时用的候选仓库（目录名命中 >= min_repo_hits 个才认）
         "candidate_repos": ["mattpocock/skills"],
         "min_repo_hits": 3,
+        # 作用域（装到哪些 agent 的技能目录）：不配就按上面的 skill_roots 派生一个 global。
+        # 每个目录可写 sync_kb 决定"正文要不要也进知识库"（项目里的技能默认不进）
+        "scopes": [],
+        # 安装/更新的锁文件（记下每个技能来自哪个仓库/哪次提交/装在哪）——放在项目根或知识库
+        "lock_name": "skills-lock.json",
+        # 允许从哪些主机拉取来源：显式白名单，非白名单一律拒绝（安全审计用）
+        "allowed_hosts": ["github.com", "codeload.github.com", "api.github.com",
+                          "raw.githubusercontent.com"],
+        # 仓库快照缓存时间（秒）：命中缓存就不重复下载（`--force-refresh` 可跳过）
+        "cache_ttl_sec": 900,
+        # 市场：搜索/安装时可浏览的来源清单（先查本地来源，再按需查这些）
+        "market": ["mattpocock/skills"],
         "inventory_relpath": "技能/技能清单.md",
         # 要监控版本的 npm 包（默认空：这是给"你自己在用的工具"留的钩子）
         "packages": [],

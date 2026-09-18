@@ -20,6 +20,7 @@ import os
 import shutil
 
 from ..text import write_lf
+from . import scopes
 
 META_NAMES = (".skill-meta.json", ".huashu-skill-meta.json", "source.json")
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".mypy_cache", ".pytest_cache", ".venv"}
@@ -168,8 +169,15 @@ def is_git_install(skill_dir: str) -> bool:
 # ------------------------------------------------------------ 备份 / 暂存
 
 def backup_skill(cfg, skill_dir: str, name: str, tag: str) -> str:
+    """备份一个技能目录。
+
+    时间戳带**微秒**：同一秒里对同一个技能备份两次（例如同一技能装在多个目录、
+    一次卸载要备份两遍）会撞名字，`copytree` 直接抛 FileExistsError ——
+    实测"两个目录卸同一个技能"只删掉了一个（第二个报错被吞成 OSError 之外的类型）。
+    """
     root = cfg.state_dir / "patrol" / "_backup"
-    dest = root / f"{name}-{tag}-{dt.datetime.now():%Y%m%d-%H%M%S}"
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    dest = root / f"{name}-{tag}-{stamp}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(skill_dir, dest,
                     ignore=shutil.ignore_patterns(".git", "__pycache__", "node_modules"))
@@ -212,14 +220,21 @@ def pending_items(cfg) -> list:
 # ------------------------------------------------------------- 发现技能
 
 def live_roots(cfg) -> list:
-    """[(根名, 绝对路径, 镜像目标相对知识库的路径)]，只返回存在的。"""
+    """[(根名, 绝对路径, 镜像目标)]，只返回存在的。
+
+    作用域化之后这里返回**所有作用域的所有目录**（治理视角：能不能更新、有没有本地改动，
+    跟"要不要进知识库"是两件事）。只同步知识库的那部分用 `kb_roots()`。
+    """
     out = []
-    for entry in cfg.section("patrol").get("skill_roots") or []:
-        path = os.path.expanduser(os.path.expandvars(str(entry.get("path", ""))))
-        if path and os.path.isdir(path):
-            out.append((entry.get("name") or os.path.basename(path), path,
-                        entry.get("mirror_to") or f"技能原始/{entry.get('name')}"))
+    for root in scopes.all_roots(cfg):
+        if root.get("exists"):
+            out.append((root["name"], root["path"], root.get("mirror_to") or ""))
     return out
+
+
+def kb_roots(cfg) -> list:
+    """[(根名, 绝对路径, 镜像目标)] —— 只管 `sync_kb: true` 的目录（镜像/清单/灌库用）。"""
+    return [(r["name"], r["path"], r["mirror_to"]) for r in scopes.kb_roots(cfg)]
 
 
 def discover_skills(root: str) -> list:
@@ -290,9 +305,13 @@ def read_front_matter(path: str) -> tuple:
 
 
 def mirror(cfg, dry_run: bool = False, delete: bool = True) -> dict:
-    """把活技能目录镜像进知识库。返回每个根的增/改/删统计。"""
+    """把**要同步知识库**的活技能目录镜像进知识库。返回每个根的增/改/删统计。
+
+    注意是 `kb_roots` 不是 `live_roots`：项目作用域/标了 `sync_kb: false` 的目录
+    照样被治理和更新，但正文不进知识库（用户要求：项目里的技能单独存放）。
+    """
     report = {}
-    for label, root, rel in live_roots(cfg):
+    for label, root, rel in kb_roots(cfg):
         target = cfg.knowledge_dir / rel
         if dry_run:
             changed = []
@@ -370,9 +389,12 @@ def write_inventory(cfg, skills: list | None = None) -> dict:
     for row in plain:
         _, desc = read_front_matter(os.path.join(row["dir"], "SKILL.md"))
         out_lines.append(f"| **{row['name']}** | {', '.join(row['sources'])} | {(desc or '')[:90]} |")
-    out_lines += ["", "## 三、目录对照", "", "| 知识库目录 | 对应活目录 | 文件数 |", "|---|---|---|"]
-    for _label, root, rel in live_roots(cfg):
-        out_lines.append(f"| `{rel}/` | `{root}` | {len(skill_files(root))} |")
+    out_lines += ["", "## 三、目录对照（按作用域）", "",
+                  "| 作用域 | 目录名 | 活目录 | 技能数 | 知识库 |", "|---|---|---|---|---|"]
+    for row in scopes.summary(cfg):
+        target = f"`{row['mirror_to']}/`" if row["sync_kb"] and row["mirror_to"] else "（不同步）"
+        out_lines.append(f"| `{row['scope']}` | `{row['name']}` | `{row['path']}` | "
+                         f"{row['skills']} | {target} |")
     for snap in cfg.section("patrol").get("snapshot_dirs") or []:
         path = snap_root / snap
         if path.is_dir():

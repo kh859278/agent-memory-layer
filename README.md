@@ -152,6 +152,10 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml patrol check` / `update` | 比上游 commit：**干净的自动更新，本地改过的只暂存**（`--deep` 用内容指纹兜底） |
 | `aml patrol diff` | 采纳前审阅：正文 diff + **新增能力信号**（网络/shell/密钥/写文件/git 写）；`--fail-on-risk` 可做门禁 |
 | `aml patrol capabilities` | 能力声明（`skill.yaml`）vs **实测**信号：没声明却在跑 shell/网络的最该先补 |
+| `aml patrol scopes` | 作用域：技能**装到哪些 agent 目录**、哪些目录的正文同时进知识库（`sync_kb`） |
+| `aml patrol sources` | 来源：多仓库来源 + **仓库布局识别**（root/standard/template/flat/nested），替掉"猜上游" |
+| `aml patrol install NAME...` | 从来源**装技能**：按布局取、装到该作用域所有活目录；覆盖前先备份，`--dry-run` 可预演 |
+| `aml patrol uninstall NAME...` | **卸载技能**：先备份再删（永远能从 `_backup/` 回滚） |
 | `aml patrol lifecycle` | 技能生命周期状态机：看状态 / 改状态（只允许合法迁移，越级要 `--force` 并留痕）；**只有 approved/active 允许自动更新** |
 | `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
 | `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份） |

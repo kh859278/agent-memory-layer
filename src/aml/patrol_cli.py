@@ -297,6 +297,113 @@ def cmd_patrol_lifecycle(cfg, args, log=print) -> int:
     return 0
 
 
+def cmd_patrol_scopes(cfg, args, log=print) -> int:
+    """作用域：技能装到哪些 agent 目录、哪些目录的正文也进知识库。"""
+    from .patrol import scopes
+    if getattr(args, "json", False):
+        print(json.dumps(scopes.summary(cfg), ensure_ascii=False, indent=2))
+        return 0
+    print(scopes.render(cfg))
+    return 0
+
+
+def cmd_patrol_sources(cfg, args, log=print) -> int:
+    """来源：多仓库 + 仓库结构（layout）识别。`--fetch` 才联网取快照来认结构。"""
+    from .patrol import github, sources
+    action = getattr(args, "action", None) or "list"
+    if action == "list":
+        if getattr(args, "json", False):
+            print(json.dumps(sources.load(cfg), ensure_ascii=False, indent=2))
+            return 0
+        print(sources.render(cfg))
+        return 0
+    if action == "add":
+        try:
+            sources.add(cfg, args.repo, scope=getattr(args, "scope", None) or "global",
+                        layout=getattr(args, "layout", None) or "auto",
+                        subdir=getattr(args, "subdir", None),
+                        branch=getattr(args, "branch", None),
+                        priority=int(getattr(args, "priority", 100) or 100), log=log)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        return 0
+    if action == "remove":
+        if not sources.remove(cfg, args.repo, log=log):
+            print(f"没有这个来源：{args.repo}", file=sys.stderr)
+            return 2
+        return 0
+    if action in ("enable", "disable"):
+        if not sources.set_enabled(cfg, args.repo, action == "enable", log=log):
+            print(f"没有这个来源：{args.repo}", file=sys.stderr)
+            return 2
+        return 0
+    if action == "detect":
+        if not getattr(args, "fetch", False):
+            print("detect 需要 --fetch（要下仓库快照才能认结构）", file=sys.stderr)
+            return 2
+        try:
+            root, used, scratch = github.fetch_repo(cfg, args.repo)
+        except Exception as e:  # noqa: BLE001
+            print(f"拉取失败：{type(e).__name__} {str(e)[:120]}", file=sys.stderr)
+            return 1
+        try:
+            report = sources.detect_layouts(root)
+            if getattr(args, "json", False):
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print(sources.render_layouts(report, repo=args.repo, head=used))
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(scratch, ignore_errors=True)
+        return 0
+    print(f"未知动作：{action}", file=sys.stderr)
+    return 2
+
+
+def cmd_patrol_install(cfg, args, log=print) -> int:
+    """装技能：从来源仓库按布局取，装进作用域里的目标目录（默认只装到"活的"目录）。"""
+    from .patrol import install
+    try:
+        plan = install.plan_install(cfg, [n for n in (args.names or []) if n],
+                                    scope_name=getattr(args, "scope", None),
+                                    source_key=getattr(args, "source", None),
+                                    project=getattr(args, "project", None),
+                                    force_refresh=getattr(args, "force_refresh", False))
+    except (KeyError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if not getattr(args, "quiet", False):
+        print(install.render_plan(plan))
+    if getattr(args, "plan_only", False):
+        return 0
+    report = install.apply_plan(cfg, plan, dry_run=getattr(args, "dry_run", False),
+                               force=getattr(args, "force", False), log=log)
+    if getattr(args, "json", False):
+        print(json.dumps({k: v for k, v in report.items()}, ensure_ascii=False, indent=2,
+                         default=str))
+    if report["blocked"]:
+        log(f"  {len(report['blocked'])} 个目标因本地有改动被拦下（--force 可覆盖，"
+            f"或先 `aml patrol diff <技能>` 看看差在哪）")
+    return 1 if (report["failed"] or report["missing"] or report["blocked"]) else 0
+
+
+def cmd_patrol_uninstall(cfg, args, log=print) -> int:
+    """卸技能：先备份再删（卸了也能从 backup 回滚）。"""
+    from .patrol import install
+    try:
+        report = install.uninstall(cfg, [n for n in (args.names or []) if n],
+                                   scope_name=getattr(args, "scope", None),
+                                   project=getattr(args, "project", None),
+                                   dry_run=getattr(args, "dry_run", False), log=log)
+    except KeyError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if getattr(args, "json", False):
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    return 1 if report["missing"] else 0
+
+
 def dt_now() -> str:
     import datetime as dt
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -305,4 +412,5 @@ def dt_now() -> str:
 __all__ = ["cmd_patrol_sync", "cmd_patrol_adopt", "cmd_patrol_check", "cmd_patrol_update",
            "cmd_patrol_accept", "cmd_patrol_packages", "cmd_patrol_notify", "cmd_patrol_run",
            "cmd_patrol_diff", "cmd_patrol_capabilities", "cmd_patrol_lifecycle",
+           "cmd_patrol_scopes", "cmd_patrol_sources", "cmd_patrol_install", "cmd_patrol_uninstall",
            "github", "skills", "update", "packages"]

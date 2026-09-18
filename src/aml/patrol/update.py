@@ -35,43 +35,65 @@ def adopt(cfg, log=print, dry_run: bool = False, apply_mode: str = "none",
           repos: list | None = None, only: set | None = None) -> dict:
     """给"没有元数据"的技能补上游来源。
 
+    上游来源**以 `sources` 为准**（`patrol sources add`，带 layout/子目录/优先级），
+    匹配方式是**归一化后的精确同名**（`Skill-Name` == `skill_name`），
+    不再用"目录名命中 ≥3 个就认这个仓库"那种猜法 —— 猜错的代价是拿别人的内容覆盖你的文件。
+
+    老配置（只写了 `candidate_repos`）仍然能用：没有来源时退回那份清单，layout 按 auto 认。
+
     apply_mode：none（只暂存，默认）/ no-local-only（本地没有独有文件才覆盖）/ all。
     """
+    from . import sources as sources_mod
     patrol = cfg.section("patrol")
-    repos = repos or patrol.get("candidate_repos") or []
+    if repos:
+        source_list = [sources_mod.get(cfg, r) or {"repo": r, "layout": "auto"} for r in repos]
+    else:
+        source_list = sources_mod.enabled_sources(cfg)
+    legacy = False
+    if not source_list:
+        legacy = True
+        source_list = [{"repo": r, "layout": "auto"}
+                       for r in patrol.get("candidate_repos") or []]
     min_hits = int(patrol.get("min_repo_hits", 3))
     untracked = [(name, path) for name, path, _ in skills.all_skills(cfg)
                  if not skills.read_meta(path)[0] and (not only or name in only)]
     result = {"untracked": len(untracked), "claims": {}, "clean": [], "applied": [],
-              "dirty": [], "failed": []}
+              "dirty": [], "failed": [], "layout": {}, "legacy_matching": legacy}
     if not untracked:
         log("没有需要纳管的技能（都有上游来源），跳过下载")
         return result
 
     names = {name for name, _ in untracked}
     claims, snapshots = {}, {}
-    for repo in repos:
-        if not names - set(claims):
+    for source in source_list:
+        repo = source.get("repo")
+        if not repo or not names - set(claims):
             break
         try:
-            root, branch, scratch = github.fetch_repo(cfg, repo)
+            root, branch, scratch = github.fetch_repo(cfg, repo, source.get("branch"))
         except Exception as e:  # noqa: BLE001
             log(f"  跳过 {repo}：{type(e).__name__} {str(e)[:80]}")
             continue
         snapshots[repo] = (root, branch, scratch)
-        remote = skills.remote_skill_dirs(root)
-        hits = sorted((names - set(claims)) & set(remote))
-        log(f"  {repo}@{branch}：远端 {len(remote)} 个技能，命中本地未跟踪 {len(hits)} 个")
-        if len(hits) < min_hits:
+        detected = sources_mod.detect_layouts(root)
+        remote = sources_mod.enumerate_source(source, root, detected)
+        matched = sources_mod.match_plan(sorted(names - set(claims)), remote)
+        log(f"  {repo}@{branch}：远端 {len(remote)} 个技能"
+            f"（布局 {detected['layouts'] or '-'}），按名字精确命中本地未跟踪 {len(matched)} 个")
+        if legacy and len(matched) < min_hits:
+            log(f"    命中数 < min_repo_hits({min_hits})，老规矩：不认这个仓库")
+            continue
+        if not matched:
             continue
         try:
-            sha, via = github.remote_sha(repo, branch)
+            sha, via = github.remote_sha(repo, source.get("branch"))
             log(f"    HEAD {sha[:7]}（via {via}）")
         except Exception as e:  # noqa: BLE001
             sha = None
             log(f"    取远端 sha 失败（{str(e)[:60]}），改记内容指纹")
-        for name in hits:
-            claims[name] = (repo, remote[name], branch, sha)
+        for name, subdir in matched.items():
+            claims[name] = (repo, subdir, branch, sha)
+            result["layout"][name] = sources_mod.classify(subdir)
 
     result["claims"] = {name: f"{repo}/{subdir}" for name, (repo, subdir, _, _) in claims.items()}
     for name, (repo, subdir, branch, sha) in sorted(claims.items()):
