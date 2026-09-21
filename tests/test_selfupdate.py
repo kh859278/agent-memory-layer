@@ -25,7 +25,7 @@ def fake_fetch(version="9.9.9"):
     详见 `test_selfupdate_ownership.py`）。不带标记的 payload 会被当成"别人的包"拒绝，
     这里的用例就变成在测另一件事了。仓库链接缺失的用例在 ownership 那个文件里。
     """
-    return lambda url: {"info": {"version": version, "name": "agent-memory-layer",
+    return lambda url: {"info": {"version": version, "name": "aml-memory",
                                  "project_urls": {
                                      "Repository": "https://github.com/kh859278/agent-memory-layer"}}}
 
@@ -71,7 +71,7 @@ def test_prerelease_is_not_treated_as_upgrade():
 def test_install_method_detects_pipx():
     # 占位符不能写成真实用户目录（`C:/Users/<名>`）——泄漏扫描会当成真路径拦下，
     # 所以这里统一用 `you` 这种明显的占位值
-    assert selfupdate.install_method(prefix="C:/<home>/pipx/venvs/agent-memory-layer") == "pipx"
+    assert selfupdate.install_method(prefix="C:/<home>/pipx/venvs/aml-memory") == "pipx"
     assert selfupdate.install_method(prefix="/home/you/.local/pipx/venvs/aml") == "pipx"
 
 
@@ -105,9 +105,9 @@ def test_command_for_three_methods():
     pip_cmd = selfupdate.command_for("pip", prefix="C:/Python312")
     assert pip_cmd[0] == sys.executable
     assert pip_cmd[1:3] == ["-m", "pip"]
-    assert pip_cmd[-3:] == ["install", "--upgrade", "agent-memory-layer"]
-    assert selfupdate.command_for("pipx") == ["pipx", "upgrade", "agent-memory-layer"]
-    assert selfupdate.command_for("uv") == ["uv", "tool", "upgrade", "agent-memory-layer"]
+    assert pip_cmd[-3:] == ["install", "--upgrade", "aml-memory"]
+    assert selfupdate.command_for("pipx") == ["pipx", "upgrade", "aml-memory"]
+    assert selfupdate.command_for("uv") == ["uv", "tool", "upgrade", "aml-memory"]
     assert selfupdate.command_for("unknown") == []
 
 
@@ -123,7 +123,7 @@ def test_pip_command_uses_user_flag_for_system_python():
 def test_latest_version_ok():
     got = selfupdate.latest_version(fetch=fake_fetch("1.4.2"))
     assert got["version"] == "1.4.2" and got["error"] is None
-    assert got["url"].endswith("/agent-memory-layer/json")
+    assert got["url"].endswith("/aml-memory/json")
 
 
 def test_latest_version_error_does_not_raise():
@@ -162,7 +162,7 @@ def test_latest_version_uses_configured_index(tmp_path):
             "Repository": "https://github.com/kh859278/agent-memory-layer"}}}
 
     selfupdate.latest_version(cfg, fetch=fake)
-    assert seen["url"] == "https://mirror.internal/pypi/agent-memory-layer/json"
+    assert seen["url"] == "https://mirror.internal/pypi/aml-memory/json"
 
 
 # ------------------------------------------------------------------ plan
@@ -174,7 +174,7 @@ def test_plan_marks_upgrade_with_command(tmp_path):
     assert report["method"] == "pip"
     assert report["latest"] == "99.0.0"
     assert report["needs_upgrade"] is True
-    assert report["command"][-3:] == ["install", "--upgrade", "agent-memory-layer"]
+    assert report["command"][-3:] == ["install", "--upgrade", "aml-memory"]
     assert report["error"] is None
 
 
@@ -212,7 +212,7 @@ def test_apply_runs_injected_runner(tmp_path):
 
     def fake_run(command):
         seen["command"] = command
-        return SimpleNamespace(returncode=0, stdout="Successfully installed agent-memory-layer\n",
+        return SimpleNamespace(returncode=0, stdout="Successfully installed aml-memory\n",
                                stderr="")
 
     result = selfupdate.apply(cfg, prefix="C:/Python312", fetch=fake_fetch("99.0.0"), run=fake_run)
@@ -274,7 +274,7 @@ def test_render_contains_key_fields(tmp_path):
     assert "当前版本" in text and "最新版本" in text and "安装方式" in text
     assert "99.0.0" in text
     assert "pip" in text
-    assert "install --upgrade agent-memory-layer" in " ".join(text.split())
+    assert "install --upgrade aml-memory" in " ".join(text.split())
 
 
 def test_render_shows_error_and_no_upgrade(tmp_path):

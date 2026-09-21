@@ -3,14 +3,15 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-memory-layer"
+name = "aml-memory"
 version = "0.1.0"
 description = "Cross-agent memory layer for coding agents: capture, distil, staged retrieval, human-readable mirror."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "agent-memory-layer authors" }]
-keywords = ["ai-agents", "memory", "mcp", "claude-code", "knowledge-base", "rag"]
+authors = [{ name = "aml-memory authors" }]
+keywords = ["ai-agents", "agent-memory", "cross-agent-memory", "coding-agents", "mcp",
+            "skill-governance", "claude-code", "knowledge-base", "local-first"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

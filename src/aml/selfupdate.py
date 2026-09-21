@@ -33,12 +33,15 @@ import subprocess
 import sys
 import urllib.request
 
-PACKAGE = "agent-memory-layer"
+PACKAGE = "aml-memory"          # PyPI 分发名（2026-09-21 定）。注意仓库名不叫这个：
+                                # GitHub 仓库仍是 `agent-memory-layer`，命令仍是 `aml`
 DEFAULT_INDEX = "https://pypi.org/pypi"
-# 归属标记：**PyPI 上的 `agent-memory-layer` 不是本项目**（2026-09-18 实测：那是 SAP 的
-# "A reusable memory layer for SAP agentic workflows"，0.1.0/0.1.1，2026-04 上传）。
-# 所以照名字升级 = 让你安装陌生人的包并把我们自己的覆盖掉。查 PyPI 前先确认包里的
-# 仓库链接是我们的；不是就拒绝（这不是理论风险：本机 `aml self-update` 第一版就差点这么干）。
+# 归属标记：**光看包名升级是不够的**。历史教训（2026-09-18）：PyPI 上的
+# `agent-memory-layer` 是别人的包（SAP 的 "A reusable memory layer for SAP agentic
+# workflows"，0.1.0/0.1.1，2026-04 上传）——照名字升级 = 让用户装上陌生人的包、
+# 把我们自己的覆盖掉（本机 `aml self-update` 第一版就差点这么干）。
+# 所以查 PyPI 前先确认"这个包声明的仓库链接是我们的"，不是就拒绝。
+# 我们自己的分发名从 2026-09-21 起是 `aml-memory`，这套校验依然保留（防以后再撞名）。
 OWNER_MARKERS = ("kh859278/agent-memory-layer", "github.com/kh859278")
 # 超时必须显式给：不给的话 urllib 会一直等到 TCP 超时（本机实测 github/PyPI 时通时断，
 # 一轮巡检被一次卡死的请求拖到计划任务重叠）

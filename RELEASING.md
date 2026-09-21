@@ -1,16 +1,17 @@
 # 发布与版本（RELEASING）
 
-## 现在卡在哪：PyPI 分发名被占用
+## 分发名：`aml-memory`（2026-09-21 定）
 
-`agent-memory-layer` 这个 **PyPI 分发名已经属于另一个不相关的项目**
-（SAP 的 `agent-memory-layer`，v0.1.1，2026-04-18 上传，摘要 "A reusable memory layer for SAP
-agentic workflows"）。所以：
-
+- **发布名是 `aml-memory`**；**GitHub 仓库名不变**（`agent-memory-layer`），命令也不变（`aml`）
+- 为什么不用仓库名：`agent-memory-layer` 这个 **PyPI 分发名已经属于另一个不相关的项目**
+  （SAP 的 `agent-memory-layer`，v0.1.1，2026-04-18 上传，摘要 "A reusable memory layer for SAP
+  agentic workflows"）。`pip install agent-memory-layer` 装到的是它，不是我们
 - README/安装脚本里的安装方式一律是 **`git+https://…`**（源码装），不要写成 `pipx install agent-memory-layer`
-- `aml self-update` 会先查 PyPI 并**校验归属**：不是我们的包就拒绝升级，退查 git tag
-- 发行名要在下面几个里挑一个（2026-09-21 实测都还空着）：
-  `aml-memory`（推荐，短、和 CLI 名一致）／`aml-memory-layer`／`aml-cli`／`agent-memory-layer-cli`
-  **决定之前不要改 `pyproject.toml` 的 `name`**（那个字段一改就是另一个包的身份）
+- `aml self-update` 会先查 PyPI 并**校验归属**（`OWNER_MARKERS`）：包里声明的仓库链接不是我们的就拒绝升级
+- 改名已经落到这些地方（2026-09-21）：`pyproject.toml` 的 `name`、`src/aml/selfupdate.py` 的
+  `PACKAGE`、`aml --version` 文案、`tests/test_selfupdate.py` 的断言、README/本文件/PROMOTION/ROADMAP
+- ⚠️ 还有一处**没改**：`src/aml/patrol/lockfile.py` 的 generator 字符串（`agent-memory-layer/<版本>`）
+  是另一个会话当时未提交的文件，已写交接单（见 `state/handoff/`）
 
 ## 发一版（名字定了之后）
 

@@ -21,8 +21,9 @@ Claude Code / Kimi Code / DeepSeek Harness side by side — they can share what 
 
 **5 分钟跑通** → [`docs/QUICKSTART.md`](docs/QUICKSTART.md)　·　**常见问题** → [`docs/FAQ.md`](docs/FAQ.md)　·　**为什么这么设计** → [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 
-> **状态：alpha。** 接口还会变；**尚未发布到 PyPI**（`agent-memory-layer` 这个分发名已被
-> 一个不相关的项目占用，见 [`ROADMAP.md`](ROADMAP.md) 的发布 checklist），请从源码装。
+> **状态：alpha。** 接口还会变；**尚未发布到 PyPI**。分发名已定为 **`aml-memory`**
+> （`agent-memory-layer` 这个名字在 PyPI 上属于一个不相关的项目，见 [`ROADMAP.md`](ROADMAP.md)
+> 的发布 checklist），发布前请从源码装。
 > 测试与 CI 见上方徽章。
 
 ---
@@ -117,6 +118,8 @@ uv tool install "git+https://github.com/kh859278/agent-memory-layer.git"     # �
 pipx install "git+https://github.com/kh859278/agent-memory-layer.git"        # 或
 pip install "git+https://github.com/kh859278/agent-memory-layer.git"
 ```
+
+> 发布到 PyPI 之后，上面三条会简化成一条：`pipx install aml-memory`（名字已定，尚未发布）。
 
 开发模式：
 

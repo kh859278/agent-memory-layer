@@ -509,7 +509,8 @@ def cmd_backfill_embeddings(args):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aml",
                                 description="跨 agent 记忆层：采集 / 蒸馏 / 分阶段检索 / 人面镜像")
-    p.add_argument("--version", action="version", version=f"agent-memory-layer {__version__}")
+    p.add_argument("--version", action="version",
+                   version=f"aml-memory {__version__}（仓库 agent-memory-layer）")
     p.add_argument("--home", help="数据主目录（覆盖 AML_HOME）")
     p.add_argument("--api", help="记忆服务地址（覆盖 memory_api）")
     p.add_argument("--db", help="记忆服务 SQLite 路径（覆盖 db_path）")
