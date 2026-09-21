@@ -166,10 +166,11 @@ def test_enabled_sources_sorted_by_priority_and_scope(tmp_path):
                                                                                 "late/repo"]
 
 
-def test_classify_covers_the_five_layouts():
+def test_classify_covers_the_layouts():
     assert sources.classify("") == "root"
     assert sources.classify("skill-a") == "flat"
     assert sources.classify("skills/skill-a") == "standard"
+    assert sources.classify("skills/engineering/skill-a") == "categorized"   # mattpocock/skills 的真实结构
     assert sources.classify("template/skill-a") == "template"
     assert sources.classify("plugins/x/skills/skill-a") == "nested"
     assert sources.classify("a/b") == "nested"

@@ -30,7 +30,7 @@ import re
 
 from . import skills
 
-LAYOUTS = ("auto", "standard", "template", "root", "flat", "nested")
+LAYOUTS = ("auto", "standard", "categorized", "template", "root", "flat", "nested")
 
 
 def _now() -> str:
@@ -169,7 +169,12 @@ def enabled_sources(cfg, scope: str | None = None) -> list:
 # ------------------------------------------------------------------ 布局识别
 
 def classify(rel: str) -> str:
-    """把技能目录相对仓库根的路径归类成布局。"""
+    """把技能目录相对仓库根的路径归类成布局。
+
+    `categorized` 是实测加进来的：`mattpocock/skills` 的真实结构是
+    `skills/<类别>/<技能名>`（如 `skills/engineering/tdd`），没有这一档时会被笼统报成
+    `nested`，看报告的人分不清"这是它本来的组织方式"还是"藏在某个角落"。
+    """
     rel = (rel or "").strip("/")
     if rel in ("", "."):
         return "root"
@@ -178,6 +183,8 @@ def classify(rel: str) -> str:
         return "flat"
     if parts[0] == "skills" and len(parts) == 2:
         return "standard"
+    if parts[0] == "skills" and len(parts) == 3:
+        return "categorized"
     if parts[0] == "template" and len(parts) == 2:
         return "template"
     return "nested"

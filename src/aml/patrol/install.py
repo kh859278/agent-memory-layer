@@ -213,6 +213,34 @@ def uninstall(cfg, names, scope_name: str | None = None, project: str | None = N
     return out
 
 
+def install_from_profile(cfg, profile_name: str, project: str | None = None,
+                         dry_run: bool = False, force: bool = False, fetch=None,
+                         force_refresh: bool = False, log=print) -> dict:
+    """按 profile 装整套：**按来源分组**逐来源规划+执行（少下几遍仓库），最后汇总。
+
+    分组的意义：同一来源里装 5 个技能，只需要取一次仓库快照。
+    """
+    from . import profiles
+    profile = profiles.get(cfg, profile_name)
+    scope_name = profile.get("scope")
+    if scope_name == "global":
+        scope_name = None                     # global 是默认值，交给 resolve 走默认路径
+    total = {"profile": profile_name, "scope": profile.get("scope"), "installed": [],
+             "replaced": [], "blocked": [], "failed": [], "missing": [], "groups": []}
+    for source_key, names in sorted(profiles.groups(profile).items()):
+        if not names:
+            continue
+        log(f"  profile {profile_name}：从 {source_key or '（自动选来源）'} 装 {len(names)} 个")
+        plan = plan_install(cfg, names, scope_name=scope_name, source_key=source_key or None,
+                            project=project, fetch=fetch, force_refresh=force_refresh)
+        total["groups"].append({"source": source_key, "skills": sorted(names),
+                                "found": sorted(plan["picks"]), "missing": plan["missing"]})
+        report = apply_plan(cfg, plan, dry_run=dry_run, force=force, log=log)
+        for key in ("installed", "replaced", "blocked", "failed", "missing"):
+            total[key] += report.get(key) or []
+    return total
+
+
 def render_plan(plan: dict) -> str:
     lines = [f"安装计划（作用域 {plan['scope']}）：",
              f"  目标目录：{', '.join(r['name'] for r in plan['roots'])}"
