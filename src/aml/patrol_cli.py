@@ -103,11 +103,21 @@ def cmd_patrol_update(cfg, args, log=print) -> int:
 
 
 def cmd_patrol_accept(cfg, args, log=print) -> int:
-    result = update.accept(cfg, name=args.name, all_=args.all, log=log)
+    """采纳暂存的上游版本：摆出能力差异，有风险项要 `--yes` 显式确认。"""
+    allow_risky = getattr(args, "yes", False)
+    result = update.accept(cfg, name=args.name, all_=args.all, log=log,
+                           allow_risky=allow_risky)
     if result["accepted"]:
         NoticeQueue(cfg).add("skills", f"已采纳 {len(result['accepted'])} 个暂存的上游技能版本")
     else:
         log("没有可采纳的暂存项")
+    if result.get("risky"):
+        log(f"🔒 {len(result['risky'])} 个有待确认的风险项（确认后再加 --yes）：")
+        for skill_name, reasons in result["risky"].items():
+            log(f"   {skill_name}：{'；'.join(reasons)}")
+    if result["skipped"] and not result.get("risky"):
+        for skill_name, why in result["skipped"].items():
+            log(f"   跳过 {skill_name}：{why}")
     return 0
 
 
@@ -214,7 +224,12 @@ def cmd_patrol_run(cfg, args, log=print) -> int:
 
 
 def cmd_patrol_diff(cfg, args, log=print) -> int:
-    """看"上游/已暂存版到底改了什么"：正文 diff + 新增能力信号（网络/shell/密钥/写文件…）。"""
+    """看"上游/已暂存版到底改了什么"：正文 diff + 新增能力信号（网络/shell/密钥/写文件…）。
+
+    顺带把"这一版被审过了"记下来（内容指纹）：`accept` 会核对，
+    防止"审的是 A、批准的是 B"。
+    """
+    from .patrol import capability
     from .patrol import diff as diff_mod
     report = diff_mod.collect(cfg, name=getattr(args, "name", None),
                               pending_only=not getattr(args, "fetch", False), log=log,
@@ -223,6 +238,10 @@ def cmd_patrol_diff(cfg, args, log=print) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(diff_mod.render(report))
+    for item in report.get("skills") or []:
+        if item.get("other"):
+            entry = capability.mark_reviewed(cfg, item["name"], item["other"])
+            log(f"  已记录审阅：{item['name']}（内容 {entry['hash'][:7]}）")
     if getattr(args, "fail_on_risk", False) and diff_mod.risky(report):
         log("⚠ 存在新增高风险能力信号（--fail-on-risk 生效，退出码 2）")
         return 2

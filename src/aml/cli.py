@@ -659,9 +659,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_diff(_cfg(args), args))
 
-    sp = psub.add_parser("accept", help="采纳暂存的上游版本（覆盖本地，先备份）")
+    sp = psub.add_parser("accept", help="采纳暂存的上游版本（覆盖本地，先备份；有风险项要 --yes）")
     sp.add_argument("name", nargs="?", help="技能名")
     sp.add_argument("--all", action="store_true", help="全部采纳")
+    sp.add_argument("--yes", action="store_true",
+                    help="确认有风险项（新增未声明的高危能力 / 声明 requires_approval）")
     sp.set_defaults(func=lambda args: patrol_cli.cmd_patrol_accept(_cfg(args), args))
 
     sp = psub.add_parser("packages", help="包版本监控（只监控不升级）")

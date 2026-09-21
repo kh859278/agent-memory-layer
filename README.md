@@ -165,7 +165,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml self-update` | 自查更新：默认**只查不装**；先查 PyPI 并**校验归属**，不是我们的包就退查 git tag（`--source git`） |
 | `aml patrol lifecycle` | 技能生命周期状态机：看状态 / 改状态（只允许合法迁移，越级要 `--force` 并留痕）；**只有 approved/active 允许自动更新** |
 | `aml patrol adopt` | 给没有上游来源的技能补元数据（目录名命中 ≥3 个才认仓库；默认只暂存不覆盖） |
-| `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份） |
+| `aml patrol accept NAME --all` | 采纳暂存的上游版本（覆盖本地，先备份）。**带证据的批准**：先核对你审过的内容 == 现在要采纳的内容，再摆出能力差异；有新增未声明的高危能力时要 `--yes`。采纳后把批准**绑定到内容 hash** |
 | `aml patrol packages` | 包版本监控（只监控不升级，附 release notes 摘要） |
 | `aml patrol notify --brief` | 取一句 ≤100 字的「这次新增/更新了什么」（没变化则空输出） |
 

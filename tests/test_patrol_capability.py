@@ -220,7 +220,7 @@ def test_accept_promotes_lifecycle_to_approved(tmp_path):
     meta = _clean_meta(live)
     action, _ = update.update_one(cfg, "s1", live, meta, skills.meta_path(live), up, "newsha")
     assert action == "gated"
-    result = update.accept(cfg, name="s1", log=lambda *_: None)
+    result = update.accept(cfg, name="s1", allow_risky=True, log=lambda *_: None)
     assert result["accepted"] == ["s1"]
     assert capability.state_of(cfg, "s1") == "approved"
     assert "echo hello" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
@@ -235,4 +235,119 @@ def test_overview_and_render_show_undeclared_risk(tmp_path):
     assert row["state"] == "discovered" and row["undeclared_high_risk"] == ["shell"]
     text = capability.render(cfg)
     assert "未声明高危" in text and "只有 approved / active 允许自动更新" in text
+    assert "证据分级" in text
     assert json.dumps(data, ensure_ascii=False)     # 可序列化（--json 用）
+
+
+# ------------------------------------------------------------------ 证据分级（只认"要求执行"）
+
+EXAMPLE_ONLY = "看图就懂：\n\n例如：\n\n```bash\ncurl https://example.invalid/x\n```\n"
+
+
+def test_example_only_evidence_is_not_a_risk(tmp_path):
+    """示例里的 shell/网络不该触发拦截 —— 第一版把 `>` 和行内反引号当信号，全是误报。"""
+    info = capability.compare(make_skill(str(tmp_path / "live"), "s1", body=EXAMPLE_ONLY))
+    assert info["levels"].get("network") == "example"
+    assert info["undeclared_high_risk"] == []
+    assert "network" in info["example_only_high_risk"]
+
+
+def test_instructional_evidence_is_a_risk(tmp_path):
+    instr = "请执行下面的命令完成安装：\n\n```bash\ncurl https://example.invalid/x -o y\n```\n"
+    info = capability.compare(make_skill(str(tmp_path / "live"), "s1", body=instr))
+    assert info["levels"].get("network") == "instructional"
+    assert "network" in info["undeclared_high_risk"]
+
+
+def test_example_only_upstream_does_not_block_update(tmp_path):
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)
+    up = make_skill(str(tmp_path / "up"), "s1", body=EXAMPLE_ONLY)
+    capability.ensure(cfg, log=lambda *_: None)
+    assert capability.gate(cfg, "s1", live, up)["allow"] is True
+    assert capability.new_high_risk(live, up, capability.read_declaration(live)) == []
+
+
+# ------------------------------------------------------------------ 批准绑定内容 / 能力的来与去
+
+def test_approval_is_bound_to_content_hash(tmp_path):
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)
+    meta = {"name": "s1", "content_hash": skills.dir_hash(live), "local_diff": False}
+    entry = capability.record_approval(cfg, "s1", live, meta=meta, log=lambda *_: None)
+    assert entry["state"] == "approved" and entry["baseline_hash"] == meta["content_hash"]
+    assert capability.gate(cfg, "s1", live, None, meta=meta)["allow"] is True
+    make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY + "又加了一段\n", tracked=True)
+    changed = {"name": "s1", "content_hash": skills.dir_hash(live), "local_diff": False}
+    verdict = capability.gate(cfg, "s1", live, None, meta=changed)
+    assert verdict["allow"] is False and "批准" in verdict["reasons"][0]
+
+
+def test_sensitive_capability_coming_back_needs_fresh_approval(tmp_path):
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    with_shell = make_skill(str(tmp_path / "live"), "s1", body=SHELL_BODY, tracked=True)
+    capability.record_approval(cfg, "s1", with_shell,
+                               meta={"content_hash": skills.dir_hash(with_shell)},
+                               log=lambda *_: None)
+    assert "shell" in capability.load(cfg)["skills"]["s1"]["capability_history"]
+    # 把 shell 去掉后再批准：历史里仍留着 shell，但当前批准集合里没有
+    without = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)
+    capability.record_approval(cfg, "s1", without,
+                               meta={"content_hash": skills.dir_hash(without)},
+                               log=lambda *_: None)
+    entry = capability.load(cfg)["skills"]["s1"]
+    assert entry["approved_capabilities"] == [] and "shell" in entry["capability_history"]
+    # shell 又回来：即使"本次 diff 没有新增"（不给 up_dir），也必须拦
+    back = make_skill(str(tmp_path / "live"), "s1", body=SHELL_BODY, tracked=True)
+    verdict = capability.gate(cfg, "s1", back, None,
+                              meta={"content_hash": skills.dir_hash(back)})
+    assert verdict["allow"] is False
+    assert any("重新出现" in reason for reason in verdict["reasons"])
+
+
+# ------------------------------------------------------------------ accept 要带证据
+
+def _staged_pair(cfg, tmp_path, body_up=SHELL_BODY):
+    live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY)
+    up = make_skill(str(tmp_path / "up"), "s1", body=body_up)
+    skills.write_meta(live, {"name": "s1", "repo": "o/r", "local_diff": True,
+                             "content_hash": skills.dir_hash(live)})
+    skills.stage_skill(cfg, up, "s1", "abc1234")
+    return live
+
+
+def test_accept_refuses_when_staged_content_changed_after_review(tmp_path):
+    """审的是 A、暂存的是 B → 拒绝（否则人在"以为审过"的情况下批准没审过的内容）。"""
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    live = _staged_pair(cfg, tmp_path)
+    staged = skills.pending_items(cfg)[0]["path"]
+    capability.mark_reviewed(cfg, "s1", staged)
+    with open(os.path.join(staged, "SKILL.md"), "a", encoding="utf-8") as f:
+        f.write("\n上游又改了一行\n")
+    result = update.accept(cfg, name="s1", log=lambda *_: None)
+    assert result["accepted"] == [] and "又变了" in result["skipped"]["s1"]
+    assert "不碰系统" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+
+
+def test_accept_requires_yes_for_new_high_risk(tmp_path):
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    live = _staged_pair(cfg, tmp_path)
+    blocked = update.accept(cfg, name="s1", log=lambda *_: None)
+    assert blocked["accepted"] == [] and "shell" in " ".join(blocked["risky"]["s1"])
+    assert "不碰系统" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+    ok = update.accept(cfg, name="s1", allow_risky=True, log=lambda *_: None)
+    assert ok["accepted"] == ["s1"]
+    assert "```bash" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+    entry = capability.load(cfg)["skills"]["s1"]
+    assert entry["state"] == "approved" and entry["baseline_hash"]
+    assert "shell" in entry["approved_capabilities"]
+
+
+def test_accept_risk_lists_capabilities_and_hints_state(tmp_path):
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    live = _staged_pair(cfg, tmp_path, body_up=EXAMPLE_ONLY)
+    staged = skills.pending_items(cfg)[0]["path"]
+    risk = capability.accept_risk(cfg, "s1", live, staged)
+    assert risk["reasons"] == []                      # 只有示例级证据 → 不拦
+    assert any("等级变化" in line for line in risk["lines"])
+    assert any("不拦" in line for line in risk["lines"])

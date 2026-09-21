@@ -341,38 +341,64 @@ def check(cfg, log=print, check_only: bool = False, deep: bool = False) -> tuple
     return results, details
 
 
-def accept(cfg, name: str | None = None, all_: bool = False, log=print) -> dict:
+def accept(cfg, name: str | None = None, all_: bool = False, log=print,
+           allow_risky: bool = False, require_review: bool = True) -> dict:
     """采纳暂存的上游版本（覆盖本地，先备份）。
 
-    **人就是那道批准**：采纳成功即把生命周期推到 `approved`（并留下 history）——
-    被闸门拦下（`gated`）的技能正是靠这一步转正。
+    **人就是那道批准**，但"批准"从 2026-09-21 起要带证据：
+
+      1. **审的与采纳的必须是同一版**：`patrol diff` 会记下暂存内容指纹（`reviewed.json`），
+         这里核对；对不上就跳过 —— 否则会出现"审的是 A、批准的是 B"
+      2. **摆出能力差异**：新增未声明的高危能力 / 声明了 requires_approval → 必须 `--yes` 显式确认
+      3. **批准绑定内容 hash**：采纳后写 `baseline_hash` 与能力快照（`capability_history` 取并集），
+         本地内容之后一变，批准自动作废，敏感能力"删掉又回来"也会被要求重新批准
     """
     items = skills.pending_items(cfg)
     targets = [x for x in items if all_ or (name and x["name"] == name)]
-    done = []
+    done, skipped, risky = [], {}, {}
     for item in targets:
-        local = next((path for n, path, _ in skills.all_skills(cfg) if n == item["name"]), None)
+        skill_name = item["name"]
+        local = next((path for n, path, _ in skills.all_skills(cfg) if n == skill_name), None)
         if not local:
-            log(f"  跳过 {item['name']}：本地没有这个技能")
+            skipped[skill_name] = "本地没有这个技能"
+            log(f"  跳过 {skill_name}：本地没有这个技能")
             continue
+        staged = item["path"]
+        expected = capability.reviewed_hash(cfg, skill_name)
+        if require_review and expected and expected != skills.dir_hash(staged):
+            skipped[skill_name] = "审阅之后暂存内容又变了（审的是 A、现在是 B）：重跑 aml patrol diff 再审"
+            log(f"  ⚠ {skill_name}：{skipped[skill_name]}")
+            continue
+        risk = capability.accept_risk(cfg, skill_name, local, staged)
+        if risk["reasons"] and not allow_risky:
+            risky[skill_name] = risk["reasons"]
+            skipped[skill_name] = "有风险项，需 --yes 确认：" + "；".join(risk["reasons"])
+            log(f"  🔒 {skill_name}：{skipped[skill_name]}")
+            for line in risk["lines"]:
+                log(f"      {line}")
+            continue
+        for line in risk["lines"]:
+            log(f"      {line}")
         meta, mpath = skills.read_meta(local)
-        meta = meta or {"name": item["name"]}
-        skills.backup_skill(cfg, local, item["name"], "pre-accept")
-        skills.sync_dir(item["path"], local)
+        meta = meta or {"name": skill_name}
+        skills.backup_skill(cfg, local, skill_name, "pre-accept")
+        skills.sync_dir(staged, local)
         meta.update({"content_hash": skills.dir_hash(local), "local_diff": False,
                      "installed_at": skills.today(), "last_checked": skills.today()})
         meta["upstream_hash"] = meta["content_hash"]
         meta.pop("staged_upstream", None)
         meta.pop("staged_reason", None)
         skills.write_meta(local, meta, mpath)
-        shutil.rmtree(item["path"], ignore_errors=True)
-        done.append(item["name"])
-        # 人工批准 → 生命周期转正（这也是 `gated` 状态的出路）
-        state = capability.state_of(cfg, item["name"])
+        shutil.rmtree(staged, ignore_errors=True)
+        state = capability.state_of(cfg, skill_name)
         if state in capability.BLOCKED:
-            log(f"  ⚠ {item['name']} 生命周期为 {state}，仍按你的要求采纳了（状态未改）")
+            # 停用/退役的技能：人明确要求也照做，但状态不动（留着"它本该停用"的痕迹）
+            log(f"  ⚠ {skill_name} 生命周期为 {state}，仍按你的要求采纳了（状态未改）")
         else:
-            capability.set_state(cfg, item["name"], "approved", why="人工采纳上游版本",
-                                 by="human", log=lambda *_a, **_k: None)
-        log(f"  ✅ {item['name']} 已采纳上游版（旧版已备份）")
-    return {"accepted": done, "requested": len(targets)}
+            capability.record_approval(cfg, skill_name, local, meta=meta, by="human",
+                                       why="人工采纳上游版本",
+                                       log=lambda *_a, **_k: None)
+        done.append(skill_name)
+        log(f"  ✅ {skill_name} 已采纳上游版（旧版已备份；批准绑定内容 "
+            f"{meta['content_hash'][:7]}）")
+    return {"accepted": done, "requested": len(targets), "skipped": skipped, "risky": risky}
