@@ -393,8 +393,19 @@ def cmd_bench(args):
               f"格式见 tools/bench/tasks.example.jsonl（复制到该路径后按你的项目改）", file=sys.stderr)
         return 2
     tasks = bench.load_tasks(path)
-    print(f"任务表：{path}（{len(tasks)} 个任务）")
-    report = bench.evaluate(cfg, tasks, log=None if args.quiet else print)
+    forms = ([f.strip() for f in args.forms.split(",") if f.strip()] if getattr(args, "forms", None)
+             else (["query", "alt"] if any(t.get("alt_query") for t in tasks) else ["query"]))
+    print(f"任务表：{path}（{len(tasks)} 个任务；问法 {', '.join(forms)}）")
+    if len(forms) > 1:
+        multi = bench.evaluate_forms(cfg, tasks, forms=forms,
+                                    log=None if args.quiet else print)
+        print(bench.render_forms(multi))
+        primary = multi["forms"].get(forms[0]) or {}
+        if args.json:
+            print(json.dumps({k: v for k, v in multi["forms"].items()}, ensure_ascii=False,
+                             indent=2))
+        return 0 if primary.get("on", {}).get("hit_rate", 0) >= args.min_hit_rate else 1
+    report = bench.evaluate(cfg, tasks, log=None if args.quiet else print, form=forms[0])
     print(bench.render(report))
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -428,12 +439,15 @@ def _cmd_task_bench(args, cfg):
         return 2
     print(f"任务表：{path}（{len(tasks)} 个任务 × {arms} × {max(1, args.repeats)} 次）")
     print(f"agent：{' '.join(agent)}")
+    if args.ablate:
+        print(f"反事实臂：memory ON 之外再跑一组「藏掉前 {args.ablate} 条记忆」，"
+              f"用来判断注入的记忆有没有真的被用上（成本相应增加）")
     print("提示：这一步会真的起 agent 并产生费用；跑完会给出六项指标与增量。", flush=True)
     # 逐行 flush：任务级基准一跑就是几分钟，输出被管道缓冲住等于没有进度
     report = taskbench.evaluate(cfg, tasks, arms=arms, agent=agent, fixtures=args.fixtures,
                                keep=args.keep, repeats=max(1, args.repeats),
                                log=None if args.quiet else (lambda m: print(m, flush=True)),
-                               feedback=args.feedback)
+                               feedback=args.feedback, ablate=max(0, int(args.ablate or 0)))
     print(taskbench.render(report))
     if not args.no_save:
         print(f"报告已存：{taskbench.save_report(cfg, report)}")
@@ -784,9 +798,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="命中率低于该值时退出码 1（可做回归门禁）")
     sp.add_argument("--quiet", action="store_true")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--forms", help="检索层：问法对照，如 query,alt（默认任务表里有 alt_query 就两种都跑）")
     sp.add_argument("--task-level", action="store_true",
                     help="跑任务级基准（真起 agent，花钱）：成功率/返工/耗时/token/违禁/回归")
     sp.add_argument("--arms", default="off,on", help="任务级：跑哪些分组，默认 off,on")
+    sp.add_argument("--ablate", type=int, default=0,
+                    help="任务级：加一条反事实臂，把检索到的前 N 条记忆藏掉再跑一次"
+                         "（回答「注入的记忆到底有没有被用上」；会多花 N 份运行成本）")
     sp.add_argument("--agent", help="任务级：agent 命令（prompt 走 stdin、stdout 出 JSON）")
     sp.add_argument("--repeats", type=int, default=1, help="任务级：每个任务每分组重复次数")
     sp.add_argument("--fixtures", help="任务级：fixture 根目录（默认 tools/bench/fixtures）")

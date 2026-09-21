@@ -1,8 +1,3 @@
-{"id": "example-win-encoding", "phase": "P2", "query": "powershell 编码 乱码",
- "expect": ["GBK", "UTF-8"], "note": "示例：应命中「Windows 编码」那条沉淀（换成你库里真有的经验）"}
-
-{"id": "example-pitfall-lookup", "phase": "P3", "query": "连接被重置 抓取 中断",
- "expect": ["重试", "断点"], "note": "示例：报错类查询（P3 阶段）"}
-
-{"id": "example-project-history", "phase": "P0", "query": "上次这个项目做到哪",
- "expect": [], "note": "示例：P0 定位阶段；expect 留空表示只看能不能召回（不判命中内容）"}
+{"id": "example-win-encoding", "phase": "P2", "query": "powershell 编码 乱码", "alt_query": "中文写进 .ps1 之后运行报错，控制台输出也是乱码", "expect": ["GBK", "UTF-8"], "relevant": ["BOM", "UTF-8", "GBK"], "note": "示例：同一任务两种问法 —— query 是知识标题（偏易、有泄漏风险），alt_query 是人真正会问的句子"}
+{"id": "example-pitfall-lookup", "phase": "P3", "query": "连接被重置 抓取 中断", "alt_query": "爬到一半连接被重置了，怎么接着爬", "expect": ["重试", "断点"], "relevant": ["重试", "断点"], "note": "示例：报错类查询（P3 阶段）"}
+{"id": "example-project-history", "phase": "P0", "query": "上次这个项目做到哪", "expect": [], "note": "示例：P0 定位阶段；expect 留空表示只看能不能召回（不判命中内容，也不参与命中率）"}

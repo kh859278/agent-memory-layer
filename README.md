@@ -143,8 +143,8 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml feedback --hash H --outcome worked\|failed\|used` | 质量反馈：让"被召回"与"有用"分开计分，影响同档位排序（没数据的记忆不受惩罚） |
 | `aml feedback --last 1 --outcome worked` | 给**最近这次检索**注入的记忆打点（依据是召回账本，不用抄 hash；`--list` 先看、`--dry-run` 预演） |
 | `aml migrate procedure` | 存量迁移：给已灌进库的技能正文补打 `kind:procedure`（默认只预览，可回滚） |
-| `aml bench --tasks FILE` | 检索基准：memory ON/OFF 对照（入口命中率 + 平均注入字数；**不是**任务成功率） |
-| `aml bench --task-level` | **任务级基准**：真起 agent 跑同一批任务两遍（有记忆/无记忆），判成败并统计成功率、返工、耗时、token、被记忆带偏率、既有功能回退率（`--feedback` 顺手回写反馈；有回退/违禁则退出码非 0，可当门禁） |
+| `aml bench --tasks FILE` | 检索基准：memory ON/OFF 对照（入口命中率 + 平均注入字数 + **P50/P95/max**）。`--forms query,alt` 同任务换问法对照（暴露"拿知识标题当查询"的自我泄漏），并给出 **P@3 / R@3**（前 3 条里真正相关的比例） |
+| `aml bench --task-level` | **任务级基准**：真起 agent 跑同一批任务两遍（有记忆/无记忆），判成败并统计成功率、返工、耗时、token、被记忆带偏率、既有功能回退率（`--feedback` 顺手回写反馈；`--ablate 1` 加一组"藏掉前 N 条记忆"的**反事实臂**，回答"注入的记忆到底有没有被用上"；有回退/违禁则退出码非 0，可当门禁） |
 | `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
 | `aml dedup` | 近义知识合并（默认只预览；`--apply` 才合并，**整簇快照可 `--rollback`**） |
 | `aml backfill-embeddings` | 补齐**缺向量**的记录（缺向量 = 语义检索永远搜不到），`--prune-orphans` 清重复孤儿 |

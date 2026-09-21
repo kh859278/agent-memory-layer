@@ -389,8 +389,12 @@ def retrieve(cfg, task: dict, log=None) -> dict:
 
 def execute(cfg, task: dict, arm: str, agent: list, fixtures: str | None = None,
             keep: bool = False, workdir: str | None = None, env: dict | None = None,
-            log=None) -> dict:
-    """跑一个任务的一个分组（arm ∈ off / on），返回一行结果。"""
+            log=None, ablate: int = 0) -> dict:
+    """跑一个任务的一个分组（arm ∈ off / on / ablate），返回一行结果。
+
+    `ablate=N`：ON 组但**藏掉排在最前的 N 条记忆**再跑 —— 反事实臂，
+    用来回答"注入的记忆到底有没有被用上"（两组成败一样 → 那些记忆可能只是装饰）。
+    """
     workdir = workdir or tempfile.mkdtemp(prefix=f"aml-bench-{task['id']}-{arm}-")
     log = log or (lambda *_a, **_k: None)
     memory = {"text": "", "hashes": [], "chars": 0, "lines": 0, "empty": True, "diag": {}}
@@ -403,9 +407,18 @@ def execute(cfg, task: dict, arm: str, agent: list, fixtures: str | None = None,
             with tempfile.TemporaryDirectory(prefix="aml-bench-base-") as base:
                 prepare_workspace(task, base, fixtures)
                 baseline = run_check(_as_cmd(task["regression"]), base)
-        if arm == "on":
+        if arm in ("on", "ablate"):
             memory = retrieve(cfg, task, log=log)
-        prompt = build_prompt(task, memory["text"] if arm == "on" else "")
+            if arm == "ablate" and ablate > 0:
+                # 反事实臂：把排在最前的 N 条记忆藏掉再跑 —— 直接回答"注入的记忆到底有没有被用上"
+                dropped = memory["items"][:ablate]
+                memory["items"] = memory["items"][ablate:]
+                memory["hashes"] = [i["hash"] for i in memory["items"]]
+                memory["text"] = "\n".join(i["text"] for i in memory["items"])
+                memory["chars"] = sum(i["chars"] for i in memory["items"])
+                memory["lines"] = len(memory["items"])
+                memory["ablated"] = [i["hash"] for i in dropped]
+        prompt = build_prompt(task, memory["text"] if arm in ("on", "ablate") else "")
         run = run_agent(agent, prompt, workdir, timeout=int(task.get("timeout", DEFAULT_TIMEOUT)),
                         env=env)
         after = snapshot(workdir)
@@ -417,13 +430,14 @@ def execute(cfg, task: dict, arm: str, agent: list, fixtures: str | None = None,
         row = grade(task, run, workdir, before, after, baseline=baseline, verify=verify,
                     workspace_text=agent_text)
         row["hidden_files"] = hidden
-        # `memory_used` 只在 ON 组有意义：OFF 组没有注入，工作区里出现同名串纯属巧合
-        # （第一版没清，OFF 组也报"用了注入的经验"，指标直接失真）
-        if arm != "on":
+        # `memory_used` 只在真的注入了记忆的组有意义：OFF 组没有注入，
+        # 工作区里出现同名串纯属巧合（第一版没清，OFF 组也报"用了注入的经验"，指标直接失真）
+        if arm not in ("on", "ablate"):
             row["memory_used"] = []
         row.update({"id": task["id"], "arm": arm, "query": task.get("query"),
                     "injected_lines": memory["lines"], "injected_chars": memory["chars"],
                     "injected_hashes": memory["hashes"], "memory_empty": memory["empty"],
+                    "ablated_hashes": memory.get("ablated") or [],
                     "memory_items": memory.get("items") or [],
                     "workdir": workdir if keep else None})
         row.update({k: run.get(k) for k in ("ok", "error", "wall_ms", "turns", "duration_ms",
@@ -438,10 +452,13 @@ def execute(cfg, task: dict, arm: str, agent: list, fixtures: str | None = None,
 
 def evaluate(cfg, tasks: list, arms=("off", "on"), agent: list | None = None,
              fixtures: str | None = None, keep: bool = False, repeats: int = 1,
-             log=None, feedback: bool = False) -> dict:
+             log=None, feedback: bool = False, ablate: int = 0) -> dict:
     """主线：任务 × 分组 × 重复次数，逐条打印进度（跑一次要花钱，必须看得见）。"""
     log = log or print
     agent = resolve_agent(agent or default_agent())
+    arms = list(arms)
+    if ablate > 0 and "ablate" not in arms:
+        arms.append("ablate")
     rows = []
     total = len(tasks) * len(arms) * max(1, repeats)
     done = 0
@@ -449,9 +466,12 @@ def evaluate(cfg, tasks: list, arms=("off", "on"), agent: list | None = None,
         for arm in arms:
             for rep in range(max(1, repeats)):
                 done += 1
-                log(f"[{done}/{total}] {task['id']} · memory {arm.upper()}"
+                label = {"on": "memory ON", "off": "memory OFF",
+                         "ablate": f"memory ON − 前 {ablate} 条（反事实）"}.get(arm, arm)
+                log(f"[{done}/{total}] {task['id']} · {label}"
                     + (f" · 第 {rep + 1} 次" if repeats > 1 else "") + " …")
-                row = execute(cfg, task, arm, agent, fixtures=fixtures, keep=keep, log=log)
+                row = execute(cfg, task, arm, agent, fixtures=fixtures, keep=keep, log=log,
+                              ablate=ablate)
                 row["repeat"] = rep + 1
                 rows.append(row)
                 mark = "成功" if row["success"] else "失败"
@@ -542,6 +562,7 @@ def summarize(rows: list, arms=None) -> dict:
             "forbidden_runs": sum(1 for r in group if r.get("forbidden_hits")),
             "regressed_runs": sum(1 for r in group if r.get("regressed")),
             "injected_chars_avg": _avg([r.get("injected_chars") for r in group]),
+            "injected_chars_pct": _pct([r.get("injected_chars") for r in group]),
             "memory_used_runs": sum(1 for r in group if r.get("memory_used")),
             "errors": sum(1 for r in group if not r.get("ok")),
         }
@@ -554,12 +575,31 @@ def summarize(rows: list, arms=None) -> dict:
                  "wall_ms": _sub(on["wall_ms_avg"], off["wall_ms_avg"]),
                  "forbidden_runs": on["forbidden_runs"] - off["forbidden_runs"],
                  "regressed_runs": on["regressed_runs"] - off["regressed_runs"]}
+    ablate_delta = None
+    if "ablate" in per_arm and "on" in per_arm:
+        # 反事实：藏掉前 N 条之后，成功率/成本有没有变化 —— 没变化说明那些记忆没被用上
+        ab, on = per_arm["ablate"], per_arm["on"]
+        ablate_delta = {"success_rate": round(ab["success_rate"] - on["success_rate"], 3),
+                        "turns": _sub(ab["rework_turns_avg"], on["rework_turns_avg"]),
+                        "tokens": _sub(ab["tokens_avg"], on["tokens_avg"])}
     return {"tasks": len({r["id"] for r in rows}), "runs": len(rows), "arms": per_arm,
-            "delta": delta, "rows": rows}
+            "delta": delta, "ablate_delta": ablate_delta, "rows": rows}
 
 
 def _sub(a, b):
     return None if a is None or b is None else round(a - b, 1)
+
+
+def _pct(values: list, points=(50, 95)) -> dict:
+    clean = sorted(v for v in values if isinstance(v, (int, float)))
+    if not clean:
+        return {}
+    out = {}
+    for point in points:
+        index = min(len(clean) - 1, max(0, int(round(point / 100 * (len(clean) - 1)))))
+        out[f"p{point}"] = clean[index]
+    out["max"] = clean[-1]
+    return out
 
 
 CAVEAT = ("口径提醒：这是**小样本任务级**对照（真跑 agent、真花钱），量的是"
@@ -572,22 +612,28 @@ def render(report: dict) -> str:
     lines = [f"任务级基准（{report['tasks']} 个任务 × {report['runs']} 次运行）",
              f"  agent：{' '.join(report.get('agent') or [])}"]
     head = (f"  {'分组':<6}{'成功率':>8}{'轮数':>7}{'改动文件':>9}{'耗时':>8}"
-            f"{'token':>8}{'成本$':>9}{'违禁':>6}{'回归':>6}{'注入字':>8}")
+            f"{'token':>8}{'成本$':>9}{'违禁':>6}{'回归':>6}{'注入字':>8}{'P95':>7}")
     lines.append(head)
-    for arm in ("off", "on"):
-        a = report["arms"].get(arm)
-        if not a:
-            continue
+    order = [a for a in ("off", "on", "ablate") if a in report["arms"]]
+    order += [a for a in sorted(report["arms"]) if a not in order]
+    for arm in order:
+        a = report["arms"][arm]
+        pct = a.get("injected_chars_pct") or {}
         lines.append(f"  {arm.upper():<6}{a['success_rate']:>7.0%}{_fmt(a['rework_turns_avg']):>7}"
                      f"{_fmt(a['changed_files_avg']):>9}{_fmt(a['wall_ms_avg']):>8}"
                      f"{_fmt(a['tokens_avg']):>8}{a['cost_usd_total']:>9}"
                      f"{a['forbidden_runs']:>6}{a['regressed_runs']:>6}"
-                     f"{_fmt(a['injected_chars_avg']):>8}")
+                     f"{_fmt(a['injected_chars_avg']):>8}{_fmt(pct.get('p95')):>7}")
     d = report.get("delta")
     if d:
         lines.append(f"  差值(ON−OFF)：成功率 {d['success_rate']:+.0%}｜轮数 {_sgn(d['turns'])}｜"
                      f"token {_sgn(d['tokens'])}｜耗时 {_sgn(d['wall_ms'])}ms｜"
                      f"违禁 {d['forbidden_runs']:+d}｜回归 {d['regressed_runs']:+d}")
+    ad = report.get("ablate_delta")
+    if ad:
+        lines.append(f"  反事实（藏掉前 N 条 − 完整注入）：成功率 {ad['success_rate']:+.0%}｜"
+                     f"轮数 {_sgn(ad['turns'])}｜token {_sgn(ad['tokens'])}"
+                     "  → 都接近 0 说明这些记忆没改变结果（可能只是装饰）")
     used = report["arms"].get("on", {}).get("memory_used_runs", 0)
     if report["arms"].get("on"):
         lines.append(f"  ON 组有 {used}/{report['arms']['on']['runs']} 次运行里出现了"

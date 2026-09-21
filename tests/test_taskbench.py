@@ -204,6 +204,53 @@ def test_execute_injects_hidden_before_grading(tmp_path, stub):
     assert row["changed_files"] == []      # 判分用的文件不该算成 agent 的改动
 
 
+# ---------------------------------------------------- 反事实臂（2026-09-21）
+
+def _three_items_retrieve(cfg, task, log=None):
+    items = [{"hash": f"h{i}", "text": f"line{i}", "chars": 10} for i in (1, 2, 3)]
+    return {"text": "\n".join(i["text"] for i in items), "hashes": [i["hash"] for i in items],
+            "items": items, "lines": 3, "chars": 30, "empty": False, "diag": {}}
+
+
+def test_ablate_arm_hides_the_top_memories(tmp_path, stub, monkeypatch):
+    """反事实臂：藏掉排在最前的 N 条 —— 用来回答"注入的记忆到底有没有被用上"。"""
+    fixtures = tmp_path / "fixtures"
+    make_fixture(fixtures)
+    monkeypatch.setattr(taskbench, "retrieve", _three_items_retrieve)
+    tasks = [make_task(verify=[sys.executable, "-c", "raise SystemExit(0)"], expect=["done"],
+                       query="q")]
+    report = taskbench.evaluate(None, tasks, arms=["on"], agent=agent_argv(stub),
+                                fixtures=str(fixtures), log=lambda *a: None, ablate=1)
+    assert "ablate" in report["arms"]                       # 自动加上的
+    on_row = next(r for r in report["rows"] if r["arm"] == "on")
+    ab_row = next(r for r in report["rows"] if r["arm"] == "ablate")
+    assert on_row["injected_chars"] == 30 and ab_row["injected_chars"] == 20
+    assert ab_row["ablated_hashes"] == ["h1"] and ab_row["injected_hashes"] == ["h2", "h3"]
+    assert report["ablate_delta"] is not None
+    assert "反事实" in taskbench.render(report)
+
+
+def test_ablate_zero_keeps_two_arms(tmp_path, stub, monkeypatch):
+    fixtures = tmp_path / "fixtures"
+    make_fixture(fixtures)
+    monkeypatch.setattr(taskbench, "retrieve", _three_items_retrieve)
+    report = taskbench.evaluate(None, [make_task(query="q")], arms=["off", "on"],
+                                agent=agent_argv(stub), fixtures=str(fixtures),
+                                log=lambda *a: None, ablate=0)
+    assert set(report["arms"]) == {"off", "on"} and report["ablate_delta"] is None
+
+
+def test_off_arm_still_never_claims_memory_use(tmp_path, stub):
+    """OFF 组与反事实组之外的组不许报"用了注入的经验"（历史 bug 的回归测试）。"""
+    fixtures = tmp_path / "fixtures"
+    make_fixture(fixtures)
+    task = make_task(verify=[sys.executable, "-c", "raise SystemExit(0)"],
+                     expect_memory=["hello"])
+    row = taskbench.execute(None, task, "off", agent_argv(stub, "write"),
+                            fixtures=str(fixtures), log=lambda *a: None)
+    assert row["memory_used"] == []
+
+
 def test_grading_ignores_hidden_file_text(tmp_path, stub, monkeypatch):
     """验收标准自己的正文不能进判分探头：它里面往往就写着"正确做法"。
 
