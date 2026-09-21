@@ -33,10 +33,10 @@ skill-governance  ai-agents  knowledge-base  local-first  python  llm-tools
 
 ## B. 包与目录索引（需要账号/凭据）
 
-1. **PyPI**：分发名已定 **`aml-memory`**（2026-09-21；`agent-memory-layer` 在 PyPI 上属于
-   SAP 的另一个项目）。发布后 PyPI 页面本身会被搜索引擎与 LLM 抓取；发布步骤见
-   [`RELEASING.md`](../RELEASING.md)。PyPI 的 description 要写满关键词（cross-agent memory /
-   coding agents / MCP / skill governance），因为**没有文章时，这里是唯一被动的曝光位**。
+1. **PyPI**：✅ **已发布 `aml-memory 0.1.0`**（2026-09-22）
+   → https://pypi.org/project/aml-memory/ 。安装即 `pipx install aml-memory`。
+   PyPI 页面本身会被搜索引擎与 LLM 抓取；**没有文章时，这里是唯一被动的曝光位**。
+   首次上传的实现细节（token 长度校验、403 的两种成因）记在 [`RELEASING.md`](../RELEASING.md)。
 2. **MCP 目录/registry**（这是"提交目录"，不是发帖）：官方 MCP servers 列表、
    mcp.so、Smithery、Glama、PulseMCP 之类。需要准备的材料都差不多：
    一句话定位 / 仓库地址 / 安装命令 / `aml mcp` 的启动方式 / 传输方式（stdio）/ 权限说明。

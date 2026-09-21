@@ -235,11 +235,13 @@
 - [ ] 跑一遍 `python tools/scrub_check.py --all` 确认连被忽略的文件里也没有内容
 - [ ] 仓库 description 与 topics（**文本已备好**：`docs/PROMOTION.md` A 节，12 个 topics
       含 `skill-governance`/`cross-agent-memory`）——网页点两下，或给一个带 `repo` 权限的 token
-- [ ] **发布到 PyPI**：分发名已定 **`aml-memory`**（2026-09-21），改名已落到
-      `pyproject.toml` / `selfupdate.PACKAGE` / `aml --version` / 测试断言 / 文档；
-      剩下的只有"你注册 PyPI + 建 token + 跑一次 `uv publish`"，步骤见 [`RELEASING.md`](RELEASING.md)
-      ⚠️ **仓库名不叫这个**：GitHub 仓库仍是 `agent-memory-layer`（那个 PyPI 名字是 SAP 的包，
-      v0.1.1，2026-04 上传），`aml self-update` 的**归属校验**（`OWNER_MARKERS`）保留防再撞名
+- [x] **发布到 PyPI**：**已发布 `aml-memory 0.1.0`**（2026-09-22，
+      https://pypi.org/project/aml-memory/ ，wheel + sdist）。分发名与仓库名不同：
+      GitHub 仓库仍叫 `agent-memory-layer`（那个 PyPI 名字是 SAP 的包，v0.1.1/2026-04 上传），
+      `aml self-update` 的**归属校验**（`OWNER_MARKERS`）保留防再撞名；
+      README 已改成 `pipx install aml-memory` 一行 + PyPI/Python 版本徽章；
+      另打了 tag `v0.1.0`（`5731615`），可 `pipx install "git+…@v0.1.0"` 装定版
+      ⚠️ 上传用的 PyPI token 只用于这一次上传，用完应删除；`uv publish` 与 `twine` 都能发
 - [x] **只读本地视图（`aml patrol ui`）**：把作用域/来源/生命周期/待批/最近报告/基准汇总
       成一个单文件静态 HTML（无外链、无 JS 依赖、**不含技能正文**）。不做交互式 Web UI：
       这台机器上的入口是 09:30 的计划任务，非交互优先

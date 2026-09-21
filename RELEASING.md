@@ -1,17 +1,27 @@
 # 发布与版本（RELEASING）
 
-## 分发名：`aml-memory`（2026-09-21 定）
+## 分发名：`aml-memory`（2026-09-21 定，2026-09-22 首发）
 
-- **发布名是 `aml-memory`**；**GitHub 仓库名不变**（`agent-memory-layer`），命令也不变（`aml`）
-- 为什么不用仓库名：`agent-memory-layer` 这个 **PyPI 分发名已经属于另一个不相关的项目**
-  （SAP 的 `agent-memory-layer`，v0.1.1，2026-04-18 上传，摘要 "A reusable memory layer for SAP
-  agentic workflows"）。`pip install agent-memory-layer` 装到的是它，不是我们
-- README/安装脚本里的安装方式一律是 **`git+https://…`**（源码装），不要写成 `pipx install agent-memory-layer`
+- **已发布 `aml-memory 0.1.0`**：https://pypi.org/project/aml-memory/ （wheel + sdist），
+  安装即为 `pipx install aml-memory` / `uv tool install aml-memory`（命令仍是 `aml`）
+- **GitHub 仓库名不变**（`agent-memory-layer`）——PyPI 上那个 `agent-memory-layer` 是**另一个
+  不相关的项目**（SAP 的 "A reusable memory layer for SAP agentic workflows"，0.1.0/0.1.1，2026-04 上传）
 - `aml self-update` 会先查 PyPI 并**校验归属**（`OWNER_MARKERS`）：包里声明的仓库链接不是我们的就拒绝升级
-- 改名已经落到这些地方（2026-09-21）：`pyproject.toml` 的 `name`、`src/aml/selfupdate.py` 的
+- 改名已落到这些地方（2026-09-21）：`pyproject.toml` 的 `name`、`src/aml/selfupdate.py` 的
   `PACKAGE`、`aml --version` 文案、`tests/test_selfupdate.py` 的断言、README/本文件/PROMOTION/ROADMAP
 - ⚠️ 还有一处**没改**：`src/aml/patrol/lockfile.py` 的 generator 字符串（`agent-memory-layer/<版本>`）
-  是另一个会话当时未提交的文件，已写交接单（见 `state/handoff/`）
+  是另一个会话当时未提交的文件（现已代提交），已写交接单（见 `state/handoff/`）
+
+### 发布凭据（重要）
+
+- 上传用 **PyPI API token**（`uv publish --username __token__ --password pypi-…`），
+  或 `twine upload -u __token__ -p pypi-… dist/*`；**上传本身不需要每次输 2FA 码**
+  （但账号必须启用 2FA，否则 PyPI 拒绝上传）
+- **token 只在发布时用一次**：发完就删（Account settings → API tokens → Remove），
+  下次发版再建新的
+- token 里 `pypi-` 后面是 base64：**长度必须是 4 的倍数或 4n+2、4n+3**；
+  长度 mod 4 == 1 说明复制时丢了字符（本机实测过一次：`uv publish` 报
+  `403 Invalid or non-existent authentication information`，就是这个问题）
 
 ## 发一版（名字定了之后）
 

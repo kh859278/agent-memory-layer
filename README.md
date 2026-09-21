@@ -1,8 +1,9 @@
 # agent-memory-layer
 
 [![ci](https://github.com/kh859278/agent-memory-layer/actions/workflows/ci.yml/badge.svg)](https://github.com/kh859278/agent-memory-layer/actions/workflows/ci.yml)
+[![pypi](https://img.shields.io/pypi/v/aml-memory.svg)](https://pypi.org/project/aml-memory/)
+[![python](https://img.shields.io/pypi/pyversions/aml-memory.svg)](pyproject.toml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
 
 **Multiple coding agents. One shared memory. One skill state.**
 Claude Code / Kimi Code / DeepSeek Harness side by side — they can share what each of them learned,
@@ -21,9 +22,9 @@ Claude Code / Kimi Code / DeepSeek Harness side by side — they can share what 
 
 **5 分钟跑通** → [`docs/QUICKSTART.md`](docs/QUICKSTART.md)　·　**常见问题** → [`docs/FAQ.md`](docs/FAQ.md)　·　**为什么这么设计** → [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 
-> **状态：alpha。** 接口还会变；**尚未发布到 PyPI**。分发名已定为 **`aml-memory`**
-> （`agent-memory-layer` 这个名字在 PyPI 上属于一个不相关的项目，见 [`ROADMAP.md`](ROADMAP.md)
-> 的发布 checklist），发布前请从源码装。
+> **状态：alpha。** 接口还会变。已发布到 PyPI：**`pipx install aml-memory`**（命令是 `aml`）。
+> 注意 PyPI 上的 `agent-memory-layer` 是**另一个不相关的项目**，只是名字和本仓库重了。
+> 测试与 CI 见上方徽章。
 > 测试与 CI 见上方徽章。
 
 ---
@@ -114,12 +115,15 @@ irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.p
 ### 只想装 CLI 本体（自己管后端）
 
 ```bash
-uv tool install "git+https://github.com/kh859278/agent-memory-layer.git"     # 或
-pipx install "git+https://github.com/kh859278/agent-memory-layer.git"        # 或
-pip install "git+https://github.com/kh859278/agent-memory-layer.git"
+uv tool install aml-memory        # 或
+pipx install aml-memory           # 或
+pip install aml-memory
 ```
 
-> 发布到 PyPI 之后，上面三条会简化成一条：`pipx install aml-memory`（名字已定，尚未发布）。
+> 装的是 PyPI 上的 [`aml-memory`](https://pypi.org/project/aml-memory/)（命令仍是 `aml`）。
+> ⚠️ **不要**装 PyPI 上的 `agent-memory-layer` —— 那是另一个不相关的项目（SAP 的），
+> 只是名字和本仓库重了。想装开发的某一版：
+> `pipx install "git+https://github.com/kh859278/agent-memory-layer.git@v0.1.0"`
 
 开发模式：
 

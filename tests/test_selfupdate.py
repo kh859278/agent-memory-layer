@@ -179,9 +179,15 @@ def test_plan_marks_upgrade_with_command(tmp_path):
 
 
 def test_plan_no_upgrade_when_index_fails(tmp_path):
+    """查不到远端 → 不升级，但仍给出"该怎么升级"的命令。
+
+    `source="pypi"` 是**刻意固定**的：默认 `auto` 会退到 git tag 兜底（真实网络调用），
+    本仓库打上 `v0.1.0` 之后兜底就会成功，这条断言随之失效
+    （2026-09-22 实测：发布 + 打 tag 之后这条从绿变红）。
+    """
     from aml import config as cfgmod
     cfg = cfgmod.load({"aml_home": str(tmp_path)})
-    report = selfupdate.plan(cfg, prefix="C:/Python312", fetch=boom_fetch())
+    report = selfupdate.plan(cfg, prefix="C:/Python312", fetch=boom_fetch(), source="pypi")
     assert report["needs_upgrade"] is False
     assert report["latest"] is None
     assert report["error"]
@@ -278,10 +284,36 @@ def test_render_contains_key_fields(tmp_path):
 
 
 def test_render_shows_error_and_no_upgrade(tmp_path):
+    """PyPI 查不到时要明说"不升级"。
+
+    **必须显式 `source="pypi"`**：默认的 `auto` 会退到 git tag 兜底，
+    而本仓库已经有 `v0.1.0` 标签 —— 兜底成功就变成"已经是最新"，断言随之失效。
+    2026-09-22 实测踩到：发布 0.1.0 并打 tag 之后，这条测试从绿变红
+    （它原本只是"碰巧"绿：仓库没 tag、网络又查不到）。
+    """
     from aml import config as cfgmod
     cfg = cfgmod.load({"aml_home": str(tmp_path)})
-    text = selfupdate.render(selfupdate.plan(cfg, prefix="C:/Python312", fetch=boom_fetch()))
+    report = selfupdate.plan(cfg, prefix="C:/Python312", fetch=boom_fetch(), source="pypi")
+    text = selfupdate.render(report)
     assert "查不到" in text and "不升级" in text
+
+
+def test_auto_falls_back_to_git_tag_when_pypi_unavailable(tmp_path):
+    """PyPI 查不到 → 退到 git tag 兜底（就是打 tag 之后真实生效的那条路径）。"""
+    from aml import config as cfgmod
+    cfg = cfgmod.load({"aml_home": str(tmp_path)})
+    calls = []
+
+    def fake_run(command):
+        calls.append(command)
+        # 模仿 `git ls-remote --tags` 的真实输出（解析器只认 refs/tags/ 这一列）
+        return 0, "abc123\trefs/tags/v0.1.0\ndef456\trefs/tags/v0.0.9\n"
+
+    report = selfupdate.plan(cfg, prefix="C:/Python312", fetch=boom_fetch(),
+                             run=fake_run, source="auto")
+    assert report["source"] == "git" and report["latest"] == "0.1.0"
+    assert calls and any("tag" in " ".join(call) for call in calls)
+    assert "git tag" in selfupdate.render(report)
 
 
 def test_current_version_returns_none_or_string_without_raising():
