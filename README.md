@@ -4,12 +4,26 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
 
-**把你的 coding agent 历史变成可复用的资产。**
-跨 agent 采集会话、保留**原始时间轴**、自动蒸馏成跨项目知识、按阶段检索，
-并同步一份**人能读的 markdown**（不被锁在数据库里）。
+**Multiple coding agents. One shared memory. One skill state.**
+Claude Code / Kimi Code / DeepSeek Harness side by side — they can share what each of them learned,
+**fully local**, no cloud, no daemon.
 
-> **状态：alpha。** Step 1（拆仓去内容）与 Step 2（可安装可验证）已完成，见 [`ROADMAP.md`](ROADMAP.md)。
-> 测试与 CI 是绿的；接口还会变。**尚未发布到 PyPI**，请从源码装。
+**多个 coding agent，共用一份记忆与技能状态。** 把 agent 历史从"各自锁在目录里的流水账"
+变成**可复用、可治理、可验证**的资产。
+
+| 环节 | 做什么 |
+|---|---|
+| **采集** | 从各 agent 的会话文件挖历史，**保留原始时间戳**（不是入库时间——否则时序全假） |
+| **沉淀** | 会话 → 跨项目知识（带复核期），并同步一份**人能读的 markdown**（不被锁进数据库） |
+| **检索** | 分阶段 P0–P6（每阶段有固定条数/字数预算）、级联回退、**未命中必须解释"为什么空"** |
+| **治理** | 技能上游监控 + 能力声明（`skill.yaml`）+ 9 态生命周期：未批准的版本**只暂存，不自动生效** |
+| **验证** | 检索层基准（问法对照 / P@3 / 注入量分位数）+ 任务级基准（真起 agent 判成败、算成本） |
+
+**5 分钟跑通** → [`docs/QUICKSTART.md`](docs/QUICKSTART.md)　·　**常见问题** → [`docs/FAQ.md`](docs/FAQ.md)　·　**为什么这么设计** → [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
+
+> **状态：alpha。** 接口还会变；**尚未发布到 PyPI**（`agent-memory-layer` 这个分发名已被
+> 一个不相关的项目占用，见 [`ROADMAP.md`](ROADMAP.md) 的发布 checklist），请从源码装。
+> 测试与 CI 见上方徽章。
 
 ---
 

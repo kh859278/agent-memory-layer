@@ -225,16 +225,23 @@
 - [x] git 身份：提交作者改为 `jk <293333882+kh859278@users.noreply.github.com>`
 - [x] 已推送到 GitHub（SSH），CI 绿
 - [x] README：徽章 + 真实输出 + 同类对照 + 诚实安装说明（PyPI 未发布）+ 架构图 + 开发入口
+- [x] **首屏改成"被搜到"的写法（2026-09-21）**：英文一句定位
+      （Multiple coding agents. One shared memory. One skill state.）+ 中英双写 + 五环节表；
+      新增 [`docs/QUICKSTART.md`](docs/QUICKSTART.md)（5 分钟跑通）、
+      [`docs/FAQ.md`](docs/FAQ.md)（11 个问题型问答，利于搜索与 LLM 抓取）、
+      [`docs/PROMOTION.md`](docs/PROMOTION.md)（不发论坛的推广漏斗，含可直接粘贴的
+      description/topics）、`CITATION.cff`、Issue/PR 模板、[`RELEASING.md`](RELEASING.md)
 - [x] 写清与上游 `mcp-memory-service` 的关系
 - [ ] 跑一遍 `python tools/scrub_check.py --all` 确认连被忽略的文件里也没有内容
-- [ ] 仓库 description 与 topics（`ai-agents` `memory` `mcp` `claude-code` `knowledge-base`）；
-      **建议加 `skill-governance`**（这是差异化所在）
-- [ ] **发布到 PyPI（`pipx install agent-memory-layer` 是 README 里承诺的下一步）**
-      ⚠️ **名字已被占用（2026-09-18 实测）**：PyPI 上的 `agent-memory-layer` 是 SAP 的包
-      （"A reusable memory layer for SAP agentic workflows"，0.1.0/0.1.1，2026-04 上传）。
-      所以：① 发布前必须先换名（例如 `agent-memory-layer-aml`），否则发不上去；
-      ② `aml self-update` 已加**归属校验**（PyPI 那份不是我们的就拒绝，退查 git tag）；
-      ③ README 里"pipx install agent-memory-layer"这句话现在是**错的**，换名后同步改
+- [ ] 仓库 description 与 topics（**文本已备好**：`docs/PROMOTION.md` A 节，12 个 topics
+      含 `skill-governance`/`cross-agent-memory`）——网页点两下，或给一个带 `repo` 权限的 token
+- [ ] **发布到 PyPI**（分发名待定，见 [`RELEASING.md`](RELEASING.md)）
+      ⚠️ **名字已被占用（2026-09-18 实测，2026-09-21 复核）**：PyPI 上的 `agent-memory-layer`
+      是 SAP 的包（"A reusable memory layer for SAP agentic workflows"，0.1.0/0.1.1，2026-04 上传）。
+      所以：① 发布前必须先换名 —— 实测 `aml-memory`（推荐）/`aml-memory-layer`/`aml-cli`/
+      `agent-memory-layer-cli` 四个都还空着；② `aml self-update` 已加**归属校验**
+      （PyPI 那份不是我们的就拒绝，退查 git tag）；③ 安装方式一律写成源码装
+      （README/install 脚本里已经是 `git+https://…`，没有错误承诺）
 - [x] **只读本地视图（`aml patrol ui`）**：把作用域/来源/生命周期/待批/最近报告/基准汇总
       成一个单文件静态 HTML（无外链、无 JS 依赖、**不含技能正文**）。不做交互式 Web UI：
       这台机器上的入口是 09:30 的计划任务，非交互优先

@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "agent-memory-layer"
+abstract: >-
+  A local-first memory and skill-governance layer for multiple coding agents:
+  cross-agent session capture with original timestamps, distillation into
+  cross-project knowledge, staged retrieval with budgets and explanations,
+  human-readable markdown mirror, and capability-declared skill governance.
+type: software
+license: MIT
+version: 0.1.0
+date-released: "2026-09-21"
+repository-code: "https://github.com/kh859278/agent-memory-layer"
+url: "https://github.com/kh859278/agent-memory-layer"
+keywords:
+  - ai-agents
+  - agent-memory
+  - cross-agent-memory
+  - coding-agents
+  - mcp
+  - skill-governance
+  - knowledge-base
+  - local-first
+authors:
+  - alias: "kh859278"
+    name: "jk"
+    email: "293333882+kh859278@users.noreply.github.com"
