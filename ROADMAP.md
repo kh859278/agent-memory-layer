@@ -151,8 +151,18 @@
       不是"发送前脱敏层"。需要敏感信息（key/token/客户名/内网地址）在调用前打码
 - [ ] **watch 的会话边界**：DSH 有归档事件（强信号），其他 agent 只有"静默 ≥120s"启发式；
       长思考（>120s）会被误判成会话结束 → 需要结合 agent 生命周期事件
+- [x] **不可重建运行数据的防护**：`state/` 被 gitignore、没有 git 历史 —— 2026-09-18 19:40
+      整棵 `state/` 被删掉重建（目录 CreationTime 为证），9/17 的任务级基准报告、召回账本、
+      基准任务表全丢，**三天后才发现**（当时 `doctor` 完全不知道）。现在：
+      ① `state/README.md` 写清哪些不可重建（`aml state readme`，巡检会重建）；
+      ② 巡检每天 `aml state snapshot` 到 `backups/state/<时间戳>/`（保留最近 10 份）；
+      ③ `aml doctor` 盯「以前快照里有、现在没了」= 确切的"被删了"信号，而不是"新装机器上没有"；
+      ④ 新的不可重建数据要加进 `src/aml/state_guard.py` 的 `DURABLE`
 - [ ] **多会话并发不变量**：git 已有 `repo_guard`；memory/distill/patrol/backup 的
-      ownership / 幂等 / 事务边界还没定义
+      ownership / 幂等 / 事务边界还没定义。**已知缺口**：`repo_guard` 的锁只覆盖提交路径，
+      不覆盖"改工作树"阶段（A 跑测试时 B 改了同一个文件，A 的测试结果其实测的是 B 的文件）；
+      现实替代是 per-session `git worktree` + `state/` 快照（见上一条），
+      因为宿主 agent 可以自由执行 shell，任何"写入前检查"都拦不住直接写盘
 - [ ] 可选适配器：Codex CLI / Copilot Chat / Cursor（本机实测这三家当前没有可用会话数据）
 - [ ] `watch` 的守护自愈（原系统用 VBS + `watch-forever.ps1`；跨平台方案待定）
 

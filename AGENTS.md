@@ -29,15 +29,25 @@
 | 巡检引擎 | `aml patrol ...`（本仓库） | 旧的 `记忆层\skills-watch\*.py` 保留为 `-Legacy` 回滚路径，**不再往里加功能** |
 | Windows 外壳 | `记忆层\skills-watch\skills-watch.ps1` + 隐藏 VBS + 计划任务 | 只负责隐藏窗口/编码/日志，里面只有一行干活：调 `aml patrol run` |
 | 通知播报 | `aml patrol notify --brief` / `--ack` | agent 在回答结尾念 ≤100 字 |
+| 运行数据（不可重建） | `state/`（有 `.gitignore`，**没有 git 历史**） | 清单/快照/体检：`aml state check` / `snapshot` / `readme`；`aml doctor` 会报"以前快照里有、现在没了" |
 
 **改动落点原则**：功能改在本仓库（有测试、配置驱动、跨平台）；Windows 专属的坑留在外壳里，
 并在注释里写清为什么不能搬（ConPTY 弹窗、PS 5.1 按 GBK 读脚本、wscript 吞非 ASCII 字节、
 GBK 解码子进程 stdout）。
 
+**`state/` 不是缓存**（2026-09-21 血的教训）：2026-09-18 19:40 整棵 `state/` 被删掉重建，
+9/17 的任务级基准报告、召回账本、基准任务表全丢，三天后才发现——因为 `state/` 被 gitignore，
+git 里查不到、当时也没有任何告警。所以：
+
+1. **要清 `state/` 之前先 `aml state snapshot`**（复制到 `backups/state/<时间戳>/`）；
+2. 不可重建的清单写在 `state/README.md`（由 `aml state readme` 生成，删了下次巡检会重建）；
+3. 巡检每天自动打一份快照，`aml doctor` 盯"丢没丢"——**新增不可重建的运行数据时，
+   把路径加进 `src/aml/state_guard.py` 的 `DURABLE`**。
+
 ## 四、提交前的最小验证（守门器会自动跑，手动改完也可以先自查）
 
 ```bash
-pytest -q                       # 76+ 个测试；改代码前请再用 3.9 跑一遍（见 README 开发章节）
+pytest -q                       # 190+ 个测试；改代码前请再用 3.9 跑一遍（见 README 开发章节）
 ruff check src tests tools
 python tools/scrub_check.py     # 内容泄漏扫描：绝对路径/凭据/邮箱/屏蔽词
 python tools/repo_guard.py --status

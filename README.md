@@ -129,7 +129,8 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | 命令 | 作用 |
 |---|---|
 | `aml init` | 建数据目录骨架 + `config.yaml`（并探测本机能看到的 agent 会话） |
-| `aml doctor` | 体检：服务 / 向量覆盖 / FTS / **索引新鲜度** / 适配器 / 检索自测，每项带修法 |
+| `aml doctor` | 体检：服务 / 向量覆盖 / FTS / **索引新鲜度** / 适配器 / 检索自测 / **运行数据有没有被删**，每项带修法 |
+| `aml state check` / `snapshot` / `readme` | 运行数据（`state/`）：列清单、打快照到 `backups/state/`、生成"别随手删"的说明。**`state/` 不是缓存**——2026-09-18 整棵被删过一次，基准报告与召回账本全丢，所以现在巡检每天自动快照、`doctor` 盯"丢没丢" |
 | `aml sync` | 采集所有 agent 会话入库 + **把 created_at 回填成原始时间**（`--dry-run` 只看） |
 | `aml watch` | 常驻监听：归档即时入库、会话静默 ≥120s 后增量入库（`--seed` 只记基线） |
 | `aml distill` | 会话 → 跨项目知识（`--list` / `--session` / `--rebuild-md`） |

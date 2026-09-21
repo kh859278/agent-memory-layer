@@ -176,13 +176,13 @@ def cmd_patrol_run(cfg, args, log=print) -> int:
         import datetime as dt
         need_adopt = (dt.datetime.now() - dt.datetime.fromtimestamp(stamp.stat().st_mtime)).days >= 7
     if need_adopt and not getattr(args, "no_adopt", False):
-        phase("=== 1/4 纳管新技能（每周最多一次）===", update.adopt, cfg, log=log)
+        phase("=== 1/5 纳管新技能（每周最多一次）===", update.adopt, cfg, log=log)
         stamp.parent.mkdir(parents=True, exist_ok=True)
         stamp.write_text(dt_now(), encoding="utf-8")
     else:
-        log("=== 1/4 纳管：7 天内跑过，跳过 ===")
+        log("=== 1/5 纳管：7 天内跑过，跳过 ===")
 
-    phase("=== 2/4 技能监控 + 自动更新 ===", cmd_patrol_update, cfg, args, log=log)
+    phase("=== 2/5 技能监控 + 自动更新 ===", cmd_patrol_update, cfg, args, log=log)
 
     def _mirror():
         report = skills.mirror(cfg)
@@ -192,8 +192,19 @@ def cmd_patrol_run(cfg, args, log=print) -> int:
         # 生命周期登记放在镜像之后：这时 meta（local_diff / staged_upstream）才是这一轮的新值
         capability.ensure(cfg, log=log)
 
-    phase("=== 3/4 知识库镜像 + 清单 + 生命周期登记 ===", _mirror)
-    phase("=== 4/4 包版本监控 ===", cmd_patrol_packages, cfg, args, log=log)
+    phase("=== 3/5 知识库镜像 + 清单 + 生命周期登记 ===", _mirror)
+    phase("=== 4/5 包版本监控 ===", cmd_patrol_packages, cfg, args, log=log)
+
+    def _state_guard():
+        # state/ 里不可重建的那部分：写说明 + 打快照 + 报"丢没丢"
+        # （9/18 整棵 state/ 被删掉重建过一次，所以这道收尾是必须的）
+        from . import state_guard
+        state_guard.write_readme(cfg)
+        state_guard.snapshot(cfg, log=log)
+        for item in state_guard.findings(cfg):
+            log(f"  {item['detail']}")
+
+    phase("=== 5/5 运行数据快照（不可重建的那些）===", _state_guard)
 
     brief = NoticeQueue(cfg).brief()
     log(f"本轮播报内容：{brief or '（无变化）'}")

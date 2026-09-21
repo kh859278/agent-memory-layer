@@ -105,6 +105,22 @@ def run(cfg) -> list:
         else:
             checks.append(Check("检索自测", OK, f"泛词查询命中 {len(result.lines)} 条"
                                                 f"（tier {result.diag.get('tier_used')}）"))
+    # 6. 运行数据：state/ 里有不可重建的东西（2026-09-18 整棵被删过一次，所以这里盯"丢没丢"）
+    from . import state_guard
+    findings = state_guard.findings(cfg)
+    lost = [f for f in findings if f["level"] == "bad"]
+    stale = [f for f in findings if f["level"] == "warn"]
+    summary = state_guard.summarize(cfg)
+    if lost:
+        checks.append(Check("运行数据", BAD, "；".join(f["detail"] for f in lost),
+                            "从 backups/state/<最近时间戳>/ 拷回；详见 state/README.md"))
+    elif stale:
+        checks.append(Check("运行数据", WARN, "；".join(f["detail"] for f in stale),
+                            "aml state check 看详情；确认对应功能还在跑"))
+    else:
+        checks.append(Check("运行数据", OK,
+                            f"不可重建文件在位 {summary['present']}/{summary['total']}，"
+                            f"已有 {summary['snapshots']} 份快照"))
     return checks
 
 

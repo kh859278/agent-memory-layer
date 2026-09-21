@@ -55,6 +55,42 @@ def cmd_doctor(args):
     return 1 if any(c.status == doctor_mod.BAD for c in checks) else 0
 
 
+def cmd_state(args):
+    """运行数据（`state/`）：清单 / 快照 / 体检。
+
+    起因：2026-09-18 19:40 整棵 `state/` 被删掉重建，9/17 的基准报告与召回账本全丢，
+    而 `aml doctor` 当时毫无察觉（`state/` 被 gitignore，git 里也查不到）。
+    所以这里做三件事：写一份"哪些不可重建"的说明、打快照、报"丢没丢"。
+    """
+    cfg = _cfg(args)
+    from . import state_guard
+    action = getattr(args, "state_cmd", None) or "check"
+    if action == "snapshot":
+        info = state_guard.snapshot(cfg, keep=args.keep)
+        print(f"快照：{info['dir'] or '（没有可备份的文件——新装机器？）'}")
+        if info["missing"]:
+            print(f"  跳过（还不存在）：{', '.join(info['missing'])}")
+        if info["pruned"]:
+            print(f"  清理旧快照：{', '.join(info['pruned'])}")
+        if args.json:
+            print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0
+    if action == "readme":
+        path = state_guard.write_readme(cfg)
+        print(f"已写入：{path}")
+        return 0
+    findings = state_guard.findings(cfg)
+    summary = state_guard.summarize(cfg)
+    if args.json:
+        print(json.dumps({"findings": findings, "summary": summary},
+                         ensure_ascii=False, indent=2))
+    else:
+        print(state_guard.render_findings(findings))
+        print(f"  清单 {summary['present']}/{summary['total']} 个文件在位，"
+              f"已有 {summary['snapshots']} 份快照（{state_guard.snapshot_root(cfg)}）")
+    return 1 if any(f["level"] == "bad" for f in findings) else 0
+
+
 def cmd_sync(args):
     cfg = _cfg(args)
     if not args.dry_run:
@@ -473,6 +509,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("doctor", help="体检：服务 / 索引新鲜度 / 向量覆盖 / 适配器 / 检索自测")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser("state", help="运行数据（state/）：清单 / 快照 / 体检（state 不是缓存）")
+    ssub = sp.add_subparsers(dest="state_cmd")
+    sp_chk = ssub.add_parser("check", help="不可重建的运行数据有没有丢/过期（默认动作）")
+    sp_chk.add_argument("--json", action="store_true")
+    sp_snap = ssub.add_parser("snapshot", help="复制到 backups/state/<时间戳>/（清 state 前先跑）")
+    sp_snap.add_argument("--keep", type=int, default=10, help="保留最近几份快照")
+    sp_snap.add_argument("--json", action="store_true")
+    sp_rd = ssub.add_parser("readme", help="重写 state/README.md（说明哪些不可重建）")
+    sp_rd.add_argument("--json", action="store_true")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_state)
 
     sp = sub.add_parser("sync", help="采集各 agent 会话并入库（含时间回填）")
     sp.add_argument("--dry-run", action="store_true", help="只看会采集到什么，不写库")
