@@ -75,6 +75,24 @@ BLOCKED = ("deprecated", "disabled", "retired")
 # 那等于让从没被人看过的技能白拿自动更新权（本机实测 26/38 个技能正是这么来的）。
 # 凭据就是 `baseline_hash`：`record_approval()` 写，`accept` 与人工 `set_state(by="human")` 都会写。
 APPROVAL_FIELD = "baseline_hash"
+# 但"要不要凭据"是**用户的策略选择**，不是我们能替他定的：
+# `patrol.update.approval_required: false` 回到"本地干净就自动更新"（2026-09-22 用户明确要这个）。
+# 默认 true —— 默认值只代表"什么都不说时的取向"，不代表作者替你决定。
+APPROVAL_POLICY_KEY = "approval_required"
+
+
+def approval_required(cfg) -> bool:
+    """自动更新要不要批准凭据？读 `patrol.update.approval_required`（默认 **true**）。
+
+    拿不准一律按 true：`cfg` 是 None、配置段畸形、值缺失 —— 全都走更严的那条路。
+    """
+    try:
+        update = (cfg.section("patrol") or {}).get("update")
+    except Exception:  # noqa: BLE001 - 配置畸形不该让闸门变成"放行"
+        return True
+    if not isinstance(update, dict):
+        return True
+    return bool(update.get(APPROVAL_POLICY_KEY, True))
 
 
 def _now() -> str:
@@ -202,15 +220,15 @@ def state_of(cfg, name: str) -> str:
     return entry.get("state") or "discovered"
 
 
-def infer_state(meta: dict | None) -> str:
-    """给"从没登记过"的技能一个诚实的初始状态（宁可保守）。
+def infer_state(meta: dict | None, strict: bool = True) -> str:
+    """给"从没登记过"的技能一个诚实的初始状态。
 
-    保守的含义：只有"受跟踪 + 本地干净 + 没有待批的上游新版"才认为它在用（`tracked`），
-    其余都给一个"还没被人看过"的状态 —— 反正这些状态都会走"只暂存"的路径。
+    `strict=True`（默认，对应 `approval_required: true`）：只有"受跟踪 + 本地干净 +
+    没有待批的上游新版"才认为它在用（`tracked`，**不在 AUTO_OK**）——
+    2026-09-22 改的原因见模块里 `APPROVAL_POLICY_KEY` 那段注释。
 
-    **2026-09-22 改**：原来"受跟踪 + 本地干净"直接推断成 `active`，而 `active` 在
-    AUTO_OK 里 —— 于是"没人看过"和"人批准过"待遇完全一样，自动覆盖就这么发生了。
-    现在推断出来的只到 `tracked`（不在 AUTO_OK）。
+    `strict=False`（用户在配置里显式要自动更新）：干净技能推断成 `active`，
+    也就是 2026-09-22 之前的行为。
     """
     meta = meta or {}
     if not meta:
@@ -219,7 +237,7 @@ def infer_state(meta: dict | None) -> str:
         return "candidate"
     if meta.get("staged_upstream"):
         return "scanned"
-    return "tracked"
+    return "tracked" if strict else "active"
 
 
 def has_approval(entry: dict | None) -> bool:
@@ -247,7 +265,7 @@ def ensure(cfg, log=print) -> dict:
         if name in skills_map:
             continue
         meta, _ = skills.read_meta(path)
-        state = infer_state(meta)
+        state = infer_state(meta, strict=approval_required(cfg))
         _register(cfg, data, name, state, "首次登记（按本地/上游状态推断）")
         added[name] = state
     if added:
@@ -403,10 +421,10 @@ def gate(cfg, name: str, local_dir: str, up_dir: str | None = None,
     `allow=False` 的含义是"**只暂存，等人批**"，不是"禁止" ——
     人工 `aml patrol accept` 永远可以采纳（人就是那道批准）。
 
-    **2026-09-22 收紧**：`AUTO_OK` 的状态**还不够**，必须有批准凭据（`baseline_hash`）。
-    原来"没登记过的技能就地按 meta 推断登记"这一条会把干净的老技能推断成 `active`，
-    而 `active` 在 AUTO_OK 里 → 等于自动放行。现在的口径是：推断出来的状态只到 `tracked`，
-    要自动更新必须有人批过一次（accept / diff+lifecycle）。
+    **批准凭据这一条是策略开关**（2026-09-22 晚）：默认 `approval_required: true`，
+    要批准凭据（`baseline_hash`），干净技能只推断到 `tracked`；
+    配置里写 `patrol.update.approval_required: false` 就回到"本地干净即自动更新"，
+    这时干净技能推断成 `active`。两条路都保留"本地改动永不覆盖""上游新增未声明高危能力不覆盖"。
 
     `meta` 传调用方手上那份最新的（`update_one` 里就有），比重新读盘准。
 
@@ -415,11 +433,12 @@ def gate(cfg, name: str, local_dir: str, up_dir: str | None = None,
       · **敏感能力"删掉又回来"** → 重新批准（不能靠"这次 diff 里没有新增"蒙过去）
       · **只认 instructional 及以上证据**：示例里的 shell 不再触发拦截（治误报）
     """
+    require_approval = approval_required(cfg)
     data = load(cfg)
     if name not in (data["skills"] or {}):
         if meta is None:
             meta = skills.read_meta(local_dir)[0] or {}
-        state = infer_state(meta)
+        state = infer_state(meta, strict=require_approval)
         _register(cfg, data, name, state, "首次登记（按本地/上游状态推断）")
         save(cfg, data)
     state = state_of(cfg, name)
@@ -429,10 +448,15 @@ def gate(cfg, name: str, local_dir: str, up_dir: str | None = None,
     if state in BLOCKED:
         reasons.append(f"生命周期状态 {state}：不更新、不加载")
     elif state not in AUTO_OK:
-        reasons.append(f"生命周期状态 {state}：还没被人看过，只暂存待批")
-    elif not has_approval(entry):
-        # 2026-09-22 加：状态是推断出来的不算数，必须有批准凭据（baseline_hash）。
-        # 恢复命令不在这里重复写 —— 下面统一给一条（少说两遍，用户更好抄）。
+        if state == "candidate":
+            # candidate = 本地改过（local_patch/local_diff）。说清是这个原因，
+            # 别让"只暂存"被读成"这技能没人看过"——用户会以为批准一下就能自动更新。
+            reasons.append("生命周期状态 candidate：本地有改动（local_patch/local_diff），"
+                           "只暂存待批")
+        else:
+            reasons.append(f"生命周期状态 {state}：还没被人看过，只暂存待批")
+    elif require_approval and not has_approval(entry):
+        # 只有策略要求凭据时才拦；恢复命令不在这里重复写（下面统一给一条）
         reasons.append("没有批准凭据（这个技能从没被人批准过，现有状态是推断出来的）")
     if declaration.get("requires_approval"):
         reasons.append("skill.yaml 声明要求人工批准")
@@ -457,9 +481,14 @@ def gate(cfg, name: str, local_dir: str, up_dir: str | None = None,
         if risky:
             reasons.append(f"上游新版新增未声明的能力：{', '.join(risky)}")
     if reasons and state not in BLOCKED:
-        # 只拦不说怎么放行 = 把人卡住。恢复路径直接写在理由里（命令可以原样粘）。
-        reasons.append(f"恢复自动更新：`aml patrol diff {name}` 审过上游改了什么之后，"
-                       f"`aml patrol lifecycle {name} approved`（或 `aml patrol accept {name}`）")
+        # 只拦不说怎么放行 = 把人卡住。但**放行方式取决于拦的理由**：
+        # candidate 是"本地改过"，批准/规定状态都不解决问题，只能人工决定要不要覆盖。
+        if state == "candidate":
+            reasons.append(f"想用上游版本覆盖本地改动：`aml patrol diff {name}` 看差异后 "
+                           f"`aml patrol accept {name}`（覆盖前会先备份本地版本）")
+        else:
+            reasons.append(f"恢复自动更新：`aml patrol diff {name}` 审过上游改了什么之后，"
+                           f"`aml patrol lifecycle {name} approved`（或 `aml patrol accept {name}`）")
     return {"allow": not reasons, "reasons": reasons, "state": state,
             "declaration": declaration, "blocked": state in BLOCKED}
 
@@ -513,18 +542,24 @@ def render(cfg) -> str:
         lines.append(f"  [{row['state']:<11}] {row['name']:<24} {'；'.join(flags)}")
     if len(rows) > 40:
         lines.append(f"  …（还有 {len(rows) - 40} 个，用 --json 看全量）")
-    lines.append("  说明：只有 approved / active 允许自动更新，**而且必须有批准凭据**"
-                 "（baseline_hash：`aml patrol accept` 或 `aml patrol lifecycle <名> approved`"
-                 " 才会写）；其余状态一律只暂存待批。批准会绑定内容 hash，本地一改就作废")
+    if approval_required(cfg):
+        lines.append("  说明：只有 approved / active 允许自动更新，**而且必须有批准凭据**"
+                     "（baseline_hash：`aml patrol accept` 或 `aml patrol lifecycle <名> approved`"
+                     " 才会写）；其余状态一律只暂存待批。批准会绑定内容 hash，本地一改就作废")
+    else:
+        lines.append("  说明：`patrol.update.approval_required: false` —— **本地干净的技能"
+                     "直接自动更新**（你显式选的策略）；本地改动永不覆盖、上游新增未声明的高危能力"
+                     "仍然会拦下")
     lines.append("  证据分级：declared（声明）> instructional（要求执行）> example（示例）"
                  "> mention（只是提到）；闸门只认前两级 —— 示例里的 shell 不再触发拦截")
     return "\n".join(lines)
 
 
 __all__ = ["DECL_NAME", "STATES", "TRANSITIONS", "AUTO_OK", "BLOCKED", "APPROVAL_FIELD",
-           "REVIEW_FILE",
+           "APPROVAL_POLICY_KEY", "REVIEW_FILE",
            "decl_path", "read_declaration", "normalize_declaration", "compare",
-           "new_high_risk", "strong_capabilities", "has_approval", "state_file", "load", "save",
+           "new_high_risk", "strong_capabilities", "has_approval", "approval_required",
+           "state_file", "load", "save",
            "state_of",
            "infer_state", "ensure", "can_transition", "set_state", "gate", "overview",
            "render", "mark_reviewed", "reviewed_hash", "review_file", "record_approval",

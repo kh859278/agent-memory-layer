@@ -158,6 +158,60 @@ def test_agent_transition_does_not_grant_auto_update(tmp_path):
     assert capability.gate(cfg, "s1", live, None)["allow"] is False
 
 
+# --------------------------------------- 策略开关：approval_required（2026-09-22 晚加）
+
+def test_switch_off_restores_auto_update_for_clean_skills(tmp_path):
+    """`patrol.update.approval_required: false` = 用户显式要"本地干净就自动更新"。
+
+    这是**策略选择**，不是漏洞：关掉之后回到 2026-09-22 之前的旧行为。
+    下面两条测试盯着"关掉开关也不放松的那两条闸门"。
+    """
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    cfg.data["patrol"]["update"]["approval_required"] = False
+    assert capability.approval_required(cfg) is False
+    live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)
+    up = make_skill(str(tmp_path / "up"), "s1", body="第二版文档，还是不动系统。\n")
+    assert capability.infer_state({"name": "s1"}, strict=False) == "active"
+    capability.ensure(cfg, log=lambda *_: None)
+    assert capability.state_of(cfg, "s1") == "active"
+    assert capability.gate(cfg, "s1", live, up)["allow"] is True
+    meta = _clean_meta(live)
+    action, _ = update.update_one(cfg, "s1", live, meta, skills.meta_path(live), up, "newsha")
+    assert action == "updated"
+    assert "第二版文档" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+
+
+def test_switch_off_still_blocks_local_edits_and_new_risk(tmp_path):
+    """关掉开关也**不**放松这两条：本地改动只暂存；上游新增未声明高危能力仍然拦。"""
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    cfg.data["patrol"]["update"]["approval_required"] = False
+    live = make_skill(str(tmp_path / "live"), "s1", body="我自己改过的", tracked=True)
+    up = make_skill(str(tmp_path / "up"), "s1", body="上游新版")
+    capability.ensure(cfg, log=lambda *_: None)
+    dirty = _clean_meta(live)
+    dirty["content_hash"] = "指纹不匹配"
+    action, _ = update.update_one(cfg, "s1", live, dirty, skills.meta_path(live), up, "newsha")
+    assert action == "staged"
+    assert "我自己改过的" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+
+    live2 = make_skill(str(tmp_path / "live2"), "s2", body=PLAIN_BODY, tracked=True)
+    up2 = make_skill(str(tmp_path / "up2"), "s2", body=SHELL_BODY)
+    capability.ensure(cfg, log=lambda *_: None)
+    verdict = capability.gate(cfg, "s2", live2, up2)
+    assert verdict["allow"] is False and "shell" in " ".join(verdict["reasons"])
+
+
+def test_switch_defaults_to_requiring_approval():
+    """默认（配置里不写这一项）必须是保守的那条 —— 默认值不等于替用户做决定。"""
+    cfg = cfgmod.load({})
+    assert capability.approval_required(cfg) is True
+    assert capability.approval_required(None) is True            # 拿不到配置也按严的来
+    cfg.data["patrol"]["update"]["approval_required"] = False
+    assert capability.approval_required(cfg) is False
+    cfg.data["patrol"]["update"] = "格式坏了"                     # 配置畸形 → 回到严的
+    assert capability.approval_required(cfg) is True
+
+
 def test_gate_blocks_new_undeclared_high_risk_capability(tmp_path):
     cfg = make_cfg(tmp_path, [tmp_path / "live"])
     live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)

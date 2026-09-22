@@ -131,6 +131,12 @@ DEFAULTS: dict = {
         "update": {
             "keep_backups": 10,
             "tarball_max_mb": 40,
+            # 自动更新要不要"批准凭据"（`baseline_hash`）。
+            # true（默认）= 干净技能只推断成 tracked，必须人批过一次才允许自动覆盖；
+            # false = 本地干净就直接自动更新（2026-09-22 之前的旧行为）。
+            # 这是**策略开关，不是安全开关**：两种取值下"本地改动永不覆盖"
+            # "上游新增未声明高危能力不覆盖"都仍然生效。
+            "approval_required": True,
             # 单仓库 git 探测超时（秒）。别设大：本机 github 时通时断，
             # 25s × 重试 2 次 = 每仓库 50s，5 个仓库能把一轮拖过 4 分钟（实测踩过）。
             "git_timeout_sec": 15,
