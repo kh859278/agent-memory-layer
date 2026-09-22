@@ -21,8 +21,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.9", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
@@ -56,8 +56,8 @@ jobs:
     # 内容泄漏扫描：这个仓库从一台在用的机器上抽取，绝不能让本机路径/客户名/密钥进仓库
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Content leak scan
@@ -67,8 +67,8 @@ jobs:
     # 静态兜底：拿 3.9 编译一遍源码，抓"本地 3.12 看不出来"的语法/API 误用
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.9"
       - name: Compile all sources under 3.9
