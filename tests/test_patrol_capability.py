@@ -2,7 +2,9 @@
 
 要钉死的口径：
   · **没声明 ≠ 声明为空**：没有 `skill.yaml` 与"声明了些什么"必须能被区分
-  · 只有 `approved` / `active` 允许自动更新；其余状态只暂存
+  · 只有 `approved` / `active` 允许自动更新，**而且必须有批准凭据**（`baseline_hash`）：
+    推断出来的状态（`infer_state`）一律不算数 —— 2026-09-22 之前 active 就够了，
+    实测等于让"从没被人看过"的技能白拿自动更新权
   · 越级迁移默认被拒；`--force` 才行，且 history 里留痕
   · 上游新版新增"未声明的高风险能力" → 不自动覆盖（这是能力模型存在的理由）
 """
@@ -115,7 +117,7 @@ def test_ensure_infers_state_without_touching_registered_ones(tmp_path):
         skills.write_meta(path, meta)
     make_skill(str(tmp_path / "live"), "unknown")           # 没有元数据 → 没纳管
     added = capability.ensure(cfg, log=lambda *_: None)
-    assert added == {"clean": "active", "dirty": "candidate", "pending": "scanned",
+    assert added == {"clean": "tracked", "dirty": "candidate", "pending": "scanned",
                      "unknown": "discovered"}
     capability.set_state(cfg, "clean", "deprecated", why="停用", log=lambda *_: None)
     capability.ensure(cfg, log=lambda *_: None)             # 再跑一次不能把状态改回去
@@ -124,16 +126,36 @@ def test_ensure_infers_state_without_touching_registered_ones(tmp_path):
 
 # ------------------------------------------------------------------ 闸门
 
-def test_gate_allows_only_approved_or_active(tmp_path):
+def test_gate_requires_approval_evidence_not_just_state(tmp_path):
+    """受跟踪 + 本地干净 → 只推断成 tracked，**不再**自动放行（2026-09-22 收紧）。"""
     cfg = make_cfg(tmp_path, [tmp_path / "live"])
     live = make_skill(str(tmp_path / "live"), "s1", tracked=True)
     up = make_skill(str(tmp_path / "up"), "s1", body=PLAIN_BODY)
     capability.ensure(cfg, log=lambda *_: None)
-    assert capability.state_of(cfg, "s1") == "active"          # 受跟踪 + 本地干净
+    assert capability.state_of(cfg, "s1") == "tracked"        # 推断不再给 active
+    blocked = capability.gate(cfg, "s1", live, up)
+    assert blocked["allow"] is False and "还没被人看过" in blocked["reasons"][0]
+    # 人显式走"批准"这条路（tracked → approved 是合法迁移，闸门给的恢复命令就是它）
+    capability.set_state(cfg, "s1", "approved", why="人工确认", log=lambda *_: None)
+    assert capability.has_approval(capability.load(cfg)["skills"]["s1"]) is True
     assert capability.gate(cfg, "s1", live, up)["allow"] is True
-    capability.set_state(cfg, "s1", "candidate", why="本地改过", log=lambda *_: None)
-    verdict = capability.gate(cfg, "s1", live, up)
-    assert verdict["allow"] is False and "还没被人看过" in verdict["reasons"][0]
+    # 本地内容一改，批准凭据作废（批准绑的是内容 hash）
+    make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY + "本地又改了\n", tracked=True)
+    verdict = capability.gate(cfg, "s1", live, up,
+                              meta={"content_hash": skills.dir_hash(live)})
+    assert verdict["allow"] is False and "批准" in " ".join(verdict["reasons"])
+
+
+def test_agent_transition_does_not_grant_auto_update(tmp_path):
+    """`by` 不是 human 的迁移不给凭据 —— agent 不能自己给自己发自动更新权。"""
+    cfg = make_cfg(tmp_path, [tmp_path / "live"])
+    live = make_skill(str(tmp_path / "live"), "s1", tracked=True)
+    capability.ensure(cfg, log=lambda *_: None)
+    capability.set_state(cfg, "s1", "active", why="agent 自己设的", by="agent",
+                         force=True, log=lambda *_: None)
+    entry = capability.load(cfg)["skills"]["s1"]
+    assert entry["state"] == "active" and capability.has_approval(entry) is False
+    assert capability.gate(cfg, "s1", live, None)["allow"] is False
 
 
 def test_gate_blocks_new_undeclared_high_risk_capability(tmp_path):
@@ -142,7 +164,8 @@ def test_gate_blocks_new_undeclared_high_risk_capability(tmp_path):
     up = make_skill(str(tmp_path / "up"), "s1", body=SHELL_BODY)
     capability.ensure(cfg, log=lambda *_: None)
     verdict = capability.gate(cfg, "s1", live, up)
-    assert verdict["allow"] is False and "shell" in verdict["reasons"][0]
+    assert verdict["allow"] is False
+    assert "shell" in " ".join(verdict["reasons"])
     # 声明过 shell 的话，同样的一版就放行（声明 = "我知道它会用 shell"）
     live2 = make_skill(str(tmp_path / "live2"), "s2", body=PLAIN_BODY,
                        decl={"capabilities": ["shell"]})
@@ -156,7 +179,8 @@ def test_gate_honors_requires_approval(tmp_path):
     up = make_skill(str(tmp_path / "up"), "s1")
     capability.ensure(cfg, log=lambda *_: None)
     verdict = capability.gate(cfg, "s1", live, up)
-    assert verdict["allow"] is False and "人工批准" in verdict["reasons"][0]
+    assert verdict["allow"] is False
+    assert "人工批准" in " ".join(verdict["reasons"])
 
 
 def test_gate_refuses_updates_for_disabled_skill(tmp_path):
@@ -169,16 +193,22 @@ def test_gate_refuses_updates_for_disabled_skill(tmp_path):
     assert verdict["allow"] is False and verdict["blocked"] is True
 
 
-def test_gate_registers_unknown_skill_instead_of_blocking_everything(tmp_path):
-    """升级当天：受跟踪且本地干净的老技能必须照常自动更新，不能被"没登记"拦一轮。"""
+def test_gate_registers_unknown_skill_but_still_waits_for_approval(tmp_path):
+    """没登记过的技能只**登记**、不自动放行（2026-09-22 口径）。
+
+    老版本这里是"登记成 active 并照常更新"，理由是"别让老技能被拦一轮"——
+    但那条理由的代价是：从没被人看过的技能直接拿到自动覆盖权。现在登记（避免每轮重复推断）
+    与放行（要人批）分开：拦一次、给命令、人来批。
+    """
     cfg = make_cfg(tmp_path, [tmp_path / "live"])
     live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY)
     up = make_skill(str(tmp_path / "up"), "s1", body="第二版文档。\n")
     meta = {"name": "s1", "commit": "old", "content_hash": skills.dir_hash(live),
             "upstream_hash": "stale", "local_diff": False}
     verdict = capability.gate(cfg, "s1", live, up, meta=meta)
-    assert verdict["allow"] is True and verdict["state"] == "active"
-    assert capability.state_of(cfg, "s1") == "active"     # 顺手登记下来了
+    assert verdict["allow"] is False and verdict["state"] == "tracked"
+    assert capability.state_of(cfg, "s1") == "tracked"        # 顺手登记下来了（不重复推断）
+    assert "lifecycle s1 approved" in " ".join(verdict["reasons"])   # 并告诉人怎么恢复
 
 
 # ------------------------------------------------------------------ 与自动更新串起来
@@ -200,15 +230,28 @@ def test_update_stages_instead_of_overwriting_when_gate_blocks(tmp_path):
     assert any(p.startswith("s1-") for p in os.listdir(cfg.state_dir / "patrol" / "_pending"))
 
 
-def test_update_still_auto_updates_clean_skill_without_new_risk(tmp_path):
+def test_update_auto_updates_only_after_approval(tmp_path):
+    """本地干净也**不再**自动覆盖：先被人批过（baseline_hash）才会 updated。
+
+    老版本这条测试叫 `test_update_still_auto_updates_clean_skill_without_new_risk`，
+    断言"干净就直接更新"—— 那正是 2026-09-22 要拿掉的行为。
+    """
     cfg = make_cfg(tmp_path, [tmp_path / "live"])
     live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)
     up = make_skill(str(tmp_path / "up"), "s1", body="第二版文档，还是不动系统。\n")
     capability.ensure(cfg, log=lambda *_: None)
     meta = _clean_meta(live)
-    action, _ = update.update_one(cfg, "s1", live, meta, skills.meta_path(live), up, "newsha")
+    action, why = update.update_one(cfg, "s1", live, meta, skills.meta_path(live), up, "newsha")
+    assert action == "gated" and "只暂存待批" in why
+    assert "不碰系统" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+    # 人批准这一版之后：**再来的上游新版**才真的落地（同一版不会重复触发）
+    capability.record_approval(cfg, "s1", live, meta=meta, log=lambda *_: None)
+    up2 = make_skill(str(tmp_path / "up2"), "s1", body="第三版文档，还是不动系统。\n")
+    meta2 = {"name": "s1", "commit": "newsha", "content_hash": skills.dir_hash(live),
+             "upstream_hash": skills.dir_hash(up), "local_diff": False}
+    action, _ = update.update_one(cfg, "s1", live, meta2, skills.meta_path(live), up2, "sha2")
     assert action == "updated"
-    assert "第二版文档" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+    assert "第三版文档" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
 
 
 def test_accept_promotes_lifecycle_to_approved(tmp_path):
@@ -235,6 +278,7 @@ def test_overview_and_render_show_undeclared_risk(tmp_path):
     assert row["state"] == "discovered" and row["undeclared_high_risk"] == ["shell"]
     text = capability.render(cfg)
     assert "未声明高危" in text and "只有 approved / active 允许自动更新" in text
+    assert "批准凭据" in text
     assert "证据分级" in text
     assert json.dumps(data, ensure_ascii=False)     # 可序列化（--json 用）
 
@@ -264,7 +308,9 @@ def test_example_only_upstream_does_not_block_update(tmp_path):
     live = make_skill(str(tmp_path / "live"), "s1", body=PLAIN_BODY, tracked=True)
     up = make_skill(str(tmp_path / "up"), "s1", body=EXAMPLE_ONLY)
     capability.ensure(cfg, log=lambda *_: None)
-    assert capability.gate(cfg, "s1", live, up)["allow"] is True
+    meta = _clean_meta(live)
+    capability.record_approval(cfg, "s1", live, meta=meta, log=lambda *_: None)
+    assert capability.gate(cfg, "s1", live, up, meta=meta)["allow"] is True
     assert capability.new_high_risk(live, up, capability.read_declaration(live)) == []
 
 

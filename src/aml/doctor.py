@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from .adapters import build
-from .http import MemoryAPIError, MemoryClient
+from .http import MemoryAPIError, client_for
 from .retrieval import Retriever
 
 OK, WARN, BAD = "ok", "warn", "bad"
@@ -36,7 +36,7 @@ def run(cfg) -> list:
                                 "aml init（会创建目录骨架与 config.yaml）"))
 
     # 2. 服务
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     try:
         client.health()
         checks.append(Check("记忆服务", OK, f"{cfg.api} 健康"))

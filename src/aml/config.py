@@ -29,6 +29,10 @@ DEFAULTS: dict = {
     "backups_dir": None,
     # 记忆服务（mcp-memory-service 的 HTTP 端口）
     "memory_api": "http://127.0.0.1:8000",
+    # 可选：记忆服务的 Bearer token。后端**默认没有鉴权**（它只绑 127.0.0.1），
+    # 这项是给"前面挂了反代 / 后端自己加了 token"的部署留的接口：
+    # 填上之后所有 HTTP 调用都会带 Authorization 头（见 http.client_for）。
+    "memory_api_token": "",
     # 可选：SQLite 库路径（只有做"创建时间回填"这类直连操作时才需要）
     "db_path": "",
     "adapters": {
@@ -82,6 +86,17 @@ DEFAULTS: dict = {
         "retry_model": "deepseek-v4-pro",
         "min_chars_for_retry": 3000,
         "sink_subdir": "沉淀",
+        # ---- 凭据与传输（2026-09-22 加）----
+        # key 的显式来源：环境变量 DISTILL_API_KEY 优先，其次是这里的 api_key。
+        "api_key": "",
+        # 老行为（从 ~/.dsh/.credentials.yaml 里正则抠 key）保留但**默认关**：
+        # 一个记忆工具默默去读别的 agent 的凭据文件，是最小惊讶原则的反面。
+        "allow_dsh_credentials": False,
+        "credentials_file": "~/.dsh/.credentials.yaml",
+        # 发送前脱敏（默认开）。规则与 tools/scrub_check.py 共用 src/aml/redact.py 一份。
+        "redact": True,
+        # 自定义屏蔽词（客户名/项目名这类没有正则形态的东西），字面量匹配
+        "redact_words": [],
     },
     "patrol": {
         "enabled": True,
@@ -206,6 +221,11 @@ class Config:
     @property
     def api(self) -> str:
         return str(self.data["memory_api"]).rstrip("/")
+
+    @property
+    def api_token(self) -> str:
+        """记忆服务的 Bearer token（可空）。见 http.client_for。"""
+        return str(self.data.get("memory_api_token") or "").strip()
 
     def phase(self, name: str) -> dict:
         phases = self.section("retrieval").get("phases") or {}

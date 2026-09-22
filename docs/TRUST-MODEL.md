@@ -45,13 +45,15 @@
 | 蒸馏（`aml distill`） | memory（project 标签）、knowledge（自动 + 复核期） | procedure / skill / policy |
 | agent 通过 MCP `store` | memory（给了 `project`）、knowledge（无 `project`） | procedure / skill / policy |
 | 镜像（`patrol sync`） | procedure（技能正文副本，**默认不进检索**） | knowledge |
-| patrol 更新 | skill（三条安全闸门：有本地改动只暂存） | policy |
+| patrol 更新 | skill（四条安全闸门：本地改动 / 没批准凭据 → 只暂存） | policy |
 | 人 | 全部 | — |
 
 现状与缺口（诚实标注）：
 
 - ✅ **已实现**：`store` 强制分层（给 `project` 就只打 `project:`）；蒸馏产物带 `review_after`；
-  技能更新有"本地改动永不覆盖"的闸门。
+  技能更新有"本地改动永不覆盖"的闸门；**自动更新必须有批准凭据**
+  （`baseline_hash`，2026-09-22 加：推断出来的 `active` 不再等于"人批准过"）；
+  **蒸馏发送前脱敏**（与提交前的泄漏扫描共用 `src/aml/redact.py` 一份规则）。
 - ⚠️ **部分实现**：技能正文镜像进向量库时打的是 `kb:技能原始`，**没有** `kind:*` 标签 ——
   所以它不会进沉淀层优先位，但仍会在"全库"兜底层被召回。
 - ❌ **未实现**：authority / freshness 乘进排序；policy 层；procedure 的默认排除；

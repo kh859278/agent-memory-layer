@@ -115,7 +115,7 @@ def test_export_markdown_groups_by_domain_and_project(tmp_path, monkeypatch):
         def _request(self, *a, **k):
             return {"memories": memories, "has_more": False}
 
-    monkeypatch.setattr(maintenance, "MemoryClient", Fake)
+    monkeypatch.setattr(maintenance, "client_for", lambda cfg: Fake())
     out = tmp_path / "export" / "dump.md"
     info = maintenance.export(cfg, str(out))
     text = out.read_text(encoding="utf-8")
@@ -137,7 +137,7 @@ def test_denoise_preview_lists_noise_without_deleting(tmp_path, monkeypatch):
             return {"memories": [{"content_hash": "h0", "content": "好的", "tags": []}],
                     "has_more": False}
 
-    monkeypatch.setattr(maintenance, "MemoryClient", Fake)
+    monkeypatch.setattr(maintenance, "client_for", lambda cfg: Fake())
     preview = maintenance.denoise(cfg, apply=False)
     assert preview["candidates"] == 1 and preview["deleted"] == 0
     applied = maintenance.denoise(cfg, apply=True)

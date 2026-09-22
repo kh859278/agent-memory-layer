@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   agent-memory-layer 一键安装（Windows / PowerShell 5.1+）
 
@@ -12,7 +12,8 @@
   幂等：已经装过就跳过（要升级加 -Upgrade）。不改注册表、不动系统目录、不需要管理员。
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File install.ps1
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Ref v0.1.0   # 钉版本（推荐）
+  powershell -ExecutionPolicy Bypass -File install.ps1              # 默认 Ref=main（脚本会提醒未钉版本）
   powershell -ExecutionPolicy Bypass -File install.ps1 -DryRun     # 只看会做什么
   powershell -ExecutionPolicy Bypass -File install.ps1 -Upgrade
   powershell -ExecutionPolicy Bypass -File install.ps1 -NoBackend -NoInit
@@ -48,6 +49,12 @@ function Run  ($exe, $argv) {
 
 Write-Host "agent-memory-layer 安装器" -ForegroundColor White
 if ($DryRun) { Warn "dry-run 模式：只打印将要执行的命令" }
+# 不钉版本就说出来（2026-09-22 加）：ref 是分支时，装的是"上游此刻的内容"，
+# 每次安装/升级都等于执行别人刚推的代码 —— 用户有权知道自己在装什么。
+if ($Ref -notmatch '^v?\d+\.\d+') {
+    Warn "Ref=$Ref 不是版本 tag：装的是该 ref 的最新内容（未固定版本，上游一改你就跟着变）"
+    Say  "  要可复现的安装：install.ps1 -Ref v0.1.0"
+}
 
 # ---------------------------------------------------------------- 1. 前置检查
 Step "1/4 检查前置条件"

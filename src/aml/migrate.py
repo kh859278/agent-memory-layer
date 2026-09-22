@@ -23,7 +23,7 @@ import datetime as dt
 import json
 import time
 
-from .http import MemoryClient
+from .http import MemoryClient, client_for
 
 
 def procedure_dirs(cfg) -> list:
@@ -45,7 +45,7 @@ def is_procedure(memory: dict, dirs=None) -> bool:
 
 def plan(cfg, client: MemoryClient | None = None, limit: int = 0, dirs=None) -> dict:
     """只读预演：有多少条来自程序性目录、其中多少已经打过标签。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     dirs = dirs or procedure_dirs(cfg)
     total = pending = tagged = 0
     records = []
@@ -68,7 +68,7 @@ def plan(cfg, client: MemoryClient | None = None, limit: int = 0, dirs=None) -> 
 def apply(cfg, client: MemoryClient | None = None, limit: int = 0, dirs=None, log=print,
           progress=None) -> dict:
     """执行迁移：原地加标签（PUT），完成后写快照（可回滚）。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     info = plan(cfg, client=client, limit=limit, dirs=dirs)
     log(f"程序性目录 {info['dirs']}：共 {info['total']} 条，已带标签 {info['tagged']}，"
         f"待迁移 {info['pending']}")
@@ -110,7 +110,7 @@ def apply(cfg, client: MemoryClient | None = None, limit: int = 0, dirs=None, lo
 
 def rollback(cfg, snapshot_path: str, client: MemoryClient | None = None, log=print) -> dict:
     """回滚迁移：把原 tags 一条条写回去。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     with open(snapshot_path, encoding="utf-8") as f:
         data = json.load(f)
     restored = failed = 0

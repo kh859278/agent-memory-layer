@@ -24,7 +24,7 @@ import sys
 from . import __version__
 from .doctor import render as doctor_render
 from .doctor import run as doctor_run
-from .http import MemoryClient
+from .http import MemoryClient, client_for
 from .retrieval import Retriever
 from .text import ensure_utf8_stdio
 
@@ -131,7 +131,7 @@ class Server:
     @property
     def client(self) -> MemoryClient:
         if self._client is None:
-            self._client = MemoryClient(self.cfg.api)
+            self._client = client_for(self.cfg)
         return self._client
 
     @property

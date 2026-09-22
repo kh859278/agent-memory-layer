@@ -14,7 +14,7 @@ import time
 
 from . import text
 from .adapters import build
-from .http import MemoryClient
+from .http import MemoryClient, client_for
 
 
 def collect(cfg, only_files=None, skip_files=None, since: str | None = None) -> list:
@@ -53,7 +53,7 @@ def collect(cfg, only_files=None, skip_files=None, since: str | None = None) -> 
 
 def write(cfg, records, client: MemoryClient | None = None, limit: int = 0, progress=None) -> dict:
     """写进记忆层。服务端按 content_hash 去重，所以可反复跑。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     if limit:
         records = records[:limit]
     ok = dup = err = 0

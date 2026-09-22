@@ -19,7 +19,7 @@ import re
 import sqlite3
 
 from .feedback import rank_factor, reliability
-from .http import MemoryAPIError, MemoryClient
+from .http import MemoryAPIError, MemoryClient, client_for
 from .migrate import is_procedure
 
 JUNK_TAGS = ("kind:task", "kind:reply")   # 会话流水：噪声大，只作为最后兜底
@@ -79,7 +79,7 @@ class Retriever:
     def __init__(self, cfg, client: MemoryClient | None = None):
         self.cfg = cfg
         self.retrieval = cfg.section("retrieval")
-        self.client = client or MemoryClient(cfg.api)
+        self.client = client or client_for(cfg)
         self.state_file = cfg.state_dir / "lookup_state.json"
         # 程序性目录（技能正文等）：这些目录来的记录即使还没打 kind:procedure 标签，
         # 也一律按程序性内容对待 —— 存量没迁移也不会漏（见 docs/TRUST-MODEL.md）

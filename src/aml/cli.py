@@ -94,9 +94,9 @@ def cmd_state(args):
 def cmd_sync(args):
     cfg = _cfg(args)
     if not args.dry_run:
-        from .http import MemoryAPIError, MemoryClient
+        from .http import MemoryAPIError, client_for
         try:
-            MemoryClient(cfg.api).health()
+            client_for(cfg).health()
         except MemoryAPIError as e:
             print(f"记忆服务不可达：{e}", file=sys.stderr)
             print("先启动服务，或用 --dry-run 只看会采到什么。", file=sys.stderr)

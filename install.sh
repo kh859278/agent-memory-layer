@@ -9,7 +9,8 @@
 # 幂等：装过就跳过（升级加 --upgrade）。不 sudo、不动系统目录。
 #
 # 用法：
-#   sh install.sh                 # 正常安装
+#   AML_REF=v0.1.0 sh install.sh  # 钉版本（推荐；tag 不要用分支名）
+#   sh install.sh                 # 默认 AML_REF=main（会提醒未钉版本）
 #   sh install.sh --dry-run       # 只打印会做什么
 #   sh install.sh --upgrade
 #   sh install.sh --no-backend --no-init
@@ -46,6 +47,13 @@ run() {
 
 echo "agent-memory-layer 安装器"
 [ "$DRY" = "1" ] && warn "dry-run 模式：只打印将要执行的命令"
+# 不钉版本就说出来（2026-09-22 加）：ref 是分支时装的是"上游此刻的内容"，
+# 每次安装/升级都等于执行别人刚推的代码 —— 用户有权知道自己在装什么。
+case "$REF" in
+  v[0-9]*|[0-9]*) : ;;                      # 看着像版本 tag
+  *) warn "AML_REF=$REF 不是版本 tag：装的是该 ref 的最新内容（未固定版本）"
+     say  "  要可复现的安装：AML_REF=v0.1.0 sh install.sh" ;;
+esac
 
 # ------------------------------------------------------------- 1. 前置检查
 step "1/4 检查前置条件"

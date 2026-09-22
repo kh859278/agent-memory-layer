@@ -1,6 +1,12 @@
 """记忆服务客户端（mcp-memory-service 的 HTTP 接口）。
 
 只依赖标准库，减少安装负担；所有请求带重试与超时，失败时抛 MemoryAPIError 并保留原文。
+
+**可选鉴权**（2026-09-22 加）：后端默认没有鉴权，只靠"绑在 127.0.0.1"来保护 ——
+本机任何进程都能读整库（实测一条 `GET /api/memories` 就够）。本客户端补的是**客户端那一半**：
+配置里填 `memory_api_token` 之后，所有请求带 `Authorization: Bearer <token>`，
+这样"前面挂反代 / 后端自己加 token"才不需要改代码。
+所有调用点统一用 `client_for(cfg)` 构造，别在 27 处各写一遍（那样加鉴权必然漏掉某条路）。
 """
 from __future__ import annotations
 
@@ -15,17 +21,26 @@ class MemoryAPIError(RuntimeError):
 
 
 class MemoryClient:
-    def __init__(self, api: str, timeout: int = 60, tries: int = 3, backoff: float = 1.5):
+    def __init__(self, api: str, timeout: int = 60, tries: int = 3, backoff: float = 1.5,
+                 token: str | None = None):
         self.api = api.rstrip("/")
         self.timeout = timeout
         self.tries = tries
         self.backoff = backoff
+        self.token = str(token or "").strip()
 
     # ---- 底层 ----
+    def headers(self, content_type: bool = True) -> dict:
+        """请求头：有 token 就带上 Bearer（没配就与老行为完全一致）。"""
+        headers = {"Content-Type": "application/json"} if content_type else {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
+
     def _request(self, path: str, payload: dict | None = None, method: str = "POST"):
         url = self.api + path
         data = json.dumps(payload).encode() if payload is not None else None
-        headers = {"Content-Type": "application/json"}
+        headers = self.headers()
         last = None
         for attempt in range(max(1, self.tries)):
             try:
@@ -42,7 +57,7 @@ class MemoryClient:
     # ---- 健康 ----
     def health(self, timeout: int = 5) -> dict:
         try:
-            req = urllib.request.Request(self.api + "/api/health")
+            req = urllib.request.Request(self.api + "/api/health", headers=self.headers(False))
             with urllib.request.urlopen(req, timeout=timeout) as f:
                 return json.loads(f.read() or b"{}")
         except Exception as e:  # noqa: BLE001
@@ -136,3 +151,13 @@ class MemoryClient:
         from urllib.parse import quote
         return self._request(f"/api/quality/memories/{quote(content_hash, safe='')}/rate",
                              {"rating": rating, "feedback": feedback[:500]})
+
+
+def client_for(cfg) -> MemoryClient:
+    """按配置建客户端（**所有调用点的统一入口**）。
+
+    为什么要有这个函数：`MemoryClient(cfg.api)` 这种写法散在 12 个模块 25 处，
+    加鉴权时"改一部分、漏一部分"是必然的 —— 而漏掉的那条路会静默 401 或被后端放过。
+    统一从配置里取 `memory_api_token`，只有这一个地方知道 token 从哪来。
+    """
+    return MemoryClient(cfg.api, token=getattr(cfg, "api_token", "") or None)

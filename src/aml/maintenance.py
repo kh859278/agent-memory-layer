@@ -17,7 +17,7 @@ import re
 import shutil
 import sqlite3
 
-from .http import MemoryClient
+from .http import client_for
 
 SMALL_STATE = ("watch_state.json", "distill_queue.json", "lookup_state.json")
 
@@ -147,7 +147,7 @@ def restore(cfg, name: str | None = None, target: str | None = None, confirm: bo
 
 def export(cfg, out_path: str, fmt: str = "md", limit: int = 0) -> dict:
     """把记忆导成人能读的文件（markdown 按领域/项目分组，或原始 JSON）。"""
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     memories = []
     page = 1
     while True:
@@ -214,7 +214,7 @@ def export(cfg, out_path: str, fmt: str = "md", limit: int = 0) -> dict:
 
 def review_due(cfg, within_days: int = 0) -> list:
     """列出已过复核期（或 N 天内到期）的知识条目。"""
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     try:
         items = client.search_by_tag(["kind:knowledge"], match_all=True, n=500)
     except Exception:  # noqa: BLE001
@@ -246,7 +246,7 @@ def postpone(cfg, content_hash: str, days: int = 180) -> dict:
     `POST /api/memories/update`，那是 **405**（端点是 PUT，body 只收 tags/memory_type/metadata）。
     这个错因为没人真跑过 `--postpone` 而藏了很久（2026-09-17 用 OpenAPI 核对后修掉）。
     """
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     new_date = (dt.date.today() + dt.timedelta(days=days)).isoformat()
     try:
         res = client.update(content_hash, {"metadata": {"review_after": new_date}})
@@ -266,7 +266,7 @@ NOISE_PATTERNS = [
 
 def noise_candidates(cfg, limit: int = 500) -> list:
     """找出应删的噪声条目（界面回显、纯确认语、纯符号）。"""
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     page, out = 1, []
     while len(out) < limit:
         try:

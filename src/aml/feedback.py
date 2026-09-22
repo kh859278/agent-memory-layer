@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .http import MemoryClient
+from .http import MemoryClient, client_for
 
 OUTCOMES = ("worked", "failed", "used")
 
@@ -80,7 +80,7 @@ def record(cfg, content_hash: str, outcome: str, note: str = "", client: MemoryC
     """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome 必须是 {OUTCOMES} 之一，收到 {outcome!r}")
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     memory = _find(client, content_hash)
     if not memory:
         return {"ok": False, "error": f"找不到这条记忆：{content_hash}"}
@@ -119,7 +119,7 @@ def verify(cfg, content_hash: str, days: int = 180, client: MemoryClient | None 
     与 `review --postpone` 的区别：那个只动 `review_after`（到期日），
     这个额外留下"什么时候被人看过"的痕迹 —— 排查错误记忆时要的就是这个。
     """
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     memory = _find(client, content_hash)
     if not memory:
         return {"ok": False, "error": f"找不到这条记忆：{content_hash}"}

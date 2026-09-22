@@ -22,7 +22,7 @@ import json
 import re
 
 from .distill import call_llm, review_after_for
-from .http import MemoryClient
+from .http import MemoryClient, client_for
 
 MERGE_PROMPT = """下面是同一主题的若干条已入库知识（来自不同会话，内容高度重叠）。
 请合并成 **1 条**：
@@ -90,7 +90,7 @@ def cluster(entries: list, sim: float = 0.16, title_sim: float = 0.40,
 
 def knowledge_entries(cfg, client: MemoryClient | None = None) -> list:
     """取所有带标题的知识条目（只有这些才参与合并）。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     out = []
     for memory in client.iter_memories(tag="kind:knowledge"):
         if (memory.get("metadata") or {}).get("title"):
@@ -137,7 +137,7 @@ def merge_cluster(cluster_mems: list, cfg, call=None) -> dict:
 
 def apply_cluster(cfg, cluster_mems: list, merged: dict, client: MemoryClient | None = None) -> dict:
     """写入合并条目并删除原条目。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     domain = (merged.get("domain") or "general").strip() or "general"
     ktype = (merged.get("type") or "pattern").strip() or "pattern"
     sessions = sorted({(m.get("metadata") or {}).get("src_session") or "-" for m in cluster_mems})
@@ -212,7 +212,7 @@ def save_snapshot(cfg, snapshot: dict):
 
 def rollback(cfg, path: str, client: MemoryClient | None = None) -> dict:
     """回滚一次合并：恢复原条目、删除合并出来的条目。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     restored = 0
@@ -239,7 +239,7 @@ def rollback(cfg, path: str, client: MemoryClient | None = None) -> dict:
 def run(cfg, apply: bool = False, sim: float = 0.16, title_sim: float = 0.40, show: int = 12,
         limit: int = 0, client: MemoryClient | None = None, call=None, log=print) -> dict:
     """预览或执行合并。apply=False 时绝不写任何东西。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     preview = plan(cfg, sim=sim, title_sim=title_sim, client=client, limit=limit)
     entries = knowledge_entries(cfg, client)[:limit or None]
     groups = preview["clusters"]

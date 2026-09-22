@@ -14,7 +14,7 @@ import os
 import re
 import shutil
 
-from .http import MemoryClient
+from .http import client_for
 
 CHUNK = 280          # 嵌入模型有效窗口有限，块太大检索会糊
 OVERLAP = 40
@@ -64,7 +64,7 @@ def dir_stats(root: str):
 
 def fetch_memories(cfg) -> list:
     """分页取回全部记忆（索引重建用）。"""
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     page, out = 1, []
     while True:
         try:
@@ -234,7 +234,7 @@ def ingest_docs(cfg, dirs=None, exts=None, since: str | None = None, dry_run: bo
     if dry_run:
         return {"files": len(plan), "chunks": total_chunks, "dry_run": True}
 
-    client = MemoryClient(cfg.api)
+    client = client_for(cfg)
     ok = dup = err = done = 0
     for name, path, parts in plan:
         try:

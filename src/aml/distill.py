@@ -8,6 +8,16 @@
 
 输入控制是踩过坑的：喂给模型的文本**必须截断 + 总量封顶**，
 否则推理会吃光输出预算、模型返回空内容（实测出现过 1.2 万 tokens 换 0 字）。
+
+**发送前必须脱敏**（2026-09-22 加，外部评审点出来的第二条）：蒸馏是本程序里**唯一**
+把内容送出本机的动作，而送出去的正是会话原文——用户消息里出现过的密钥、内网地址、
+客户名都会跟着走。所以 `call_llm()` 在发请求前统一过一遍 `redact`（规则与提交前的
+内容泄漏扫描**同一份**，见 `aml/redact.py`），并把"盖掉了几处"记进 usage，
+由 `drain()` 打给人看。默认开；要关得显式改配置（`distill.redact: false`）。
+
+API key 也从 2026-09-22 起**只认显式来源**（环境变量 / 配置），
+不再默认去翻 `~/.dsh/.credentials.yaml` —— 从别人的凭据文件里默默抠 key 太隐晦，
+要保留那条路必须显式写 `distill.allow_dsh_credentials: true`。
 """
 from __future__ import annotations
 
@@ -18,7 +28,8 @@ import re
 import time
 import urllib.request
 
-from .http import MemoryClient
+from .http import MemoryClient, client_for
+from .redact import redact
 from .text import write_lf
 
 PROMPT = """下面是某个项目的**一段真实工作会话记录**（按时间排序，U=用户任务，A=agent 回复）。
@@ -141,16 +152,44 @@ def release_lock():
 # --------------------------------------------------------------- 模型调用
 
 def api_key(cfg) -> str:
+    """取 API key：**只认显式来源**。
+
+    顺序：`DISTILL_API_KEY` 环境变量 → 配置 `distill.api_key` → （仅在显式开启时）
+    `distill.credentials_file` 指向的文件。
+
+    为什么默认不再读 DSH 的凭据文件（2026-09-22 改）：那是一个"用户不知道自己在被读"的
+    隐式路径 —— 一个记忆工具悄悄从别的 agent 的凭据文件里抠 key，不符合最小惊讶原则。
+    老行为保留但必须显式：`distill.allow_dsh_credentials: true`。
+    """
     key = os.environ.get("DISTILL_API_KEY")
     if key:
         return key
-    cred = cfg.section("distill").get("credentials_file") or "~/.dsh/.credentials.yaml"
+    spec = cfg.section("distill")
+    configured = str(spec.get("api_key") or "").strip()
+    if configured:
+        return configured
+    if not spec.get("allow_dsh_credentials"):
+        return ""
+    cred = spec.get("credentials_file") or "~/.dsh/.credentials.yaml"
     try:
         with open(os.path.expanduser(cred), encoding="utf-8") as f:
             m = re.search(r"DEEPSEEK_API_KEY:\s*['\"]?([^'\"\s]+)", f.read())
             return m.group(1) if m else ""
     except OSError:
         return ""
+
+
+def safe_transcript(cfg, transcript: str) -> tuple:
+    """发送前脱敏：返回 `(文本, 命中标签, 盖掉几处)`。
+
+    开关是 `distill.redact`（**默认开**）；自定义屏蔽词走 `distill.redact_words`
+    （客户名/项目名这类没有正则形态的东西）。规则表与 `tools/scrub_check.py` 共用一份。
+    """
+    spec = cfg.section("distill")
+    if not spec.get("redact", True):
+        return transcript, [], 0
+    out, labels = redact(transcript, extra_words=spec.get("redact_words") or [])
+    return out, labels, out.count("［已脱敏］")
 
 
 def build_transcript(mems, max_chars: int = 8000, per_mem: int = 200, max_mem: int = 400):
@@ -171,10 +210,14 @@ def call_llm(cfg, transcript: str, model: str | None = None, key: str | None = N
     spec = cfg.section("distill")
     key = key or api_key(cfg)
     if not key:
-        raise RuntimeError("没有可用的 API key：设置 DISTILL_API_KEY 或在 distill.credentials_file 指向的文件里配")
+        raise RuntimeError("没有可用的 API key：设置 DISTILL_API_KEY、或在配置里写 "
+                           "distill.api_key（想沿用老的「读 DSH 凭据文件」行为，"
+                           "要显式打开 distill.allow_dsh_credentials）")
+    # 唯一的出网点，脱敏就放在这里：任何调用方都绕不过去（重试那一发也走这条）
+    payload_text, labels, redacted = safe_transcript(cfg, transcript)
     body = json.dumps({
         "model": model or spec.get("model", "deepseek-flash"),
-        "messages": [{"role": "user", "content": PROMPT + transcript}],
+        "messages": [{"role": "user", "content": PROMPT + payload_text}],
         "temperature": 0.3,
         "max_tokens": int(spec.get("max_out_tokens", 6000)),
     }).encode()
@@ -185,7 +228,11 @@ def call_llm(cfg, transcript: str, model: str | None = None, key: str | None = N
                                           "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=300) as f:
         payload = json.loads(f.read())
-    return payload["choices"][0]["message"]["content"], payload.get("usage") or {}
+    usage = payload.get("usage") or {}
+    # 把脱敏情况捎回给调用方（usage 是这次调用新建的 dict）
+    usage["_redacted"] = redacted
+    usage["_redacted_labels"] = labels
+    return payload["choices"][0]["message"]["content"], usage
 
 
 def parse_entries(text: str) -> list:
@@ -231,7 +278,7 @@ def sink_markdown(cfg, entries, item) -> int:
 
 def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int:
     """写回记忆层：kind:knowledge + domain + 复核期。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     ok = 0
     for e in entries:
         if not isinstance(e, dict) or not e.get("body"):
@@ -257,7 +304,7 @@ def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int
 
 def session_memories(cfg, short: str, agent: str | None = None, client: MemoryClient | None = None):
     """取某会话已入库的记忆（按时间排序）。"""
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     tags = [f"session:{short}"]
     if agent:
         tags.append(f"agent:{agent}")
@@ -290,7 +337,7 @@ def drain(cfg, session_id: str | None = None, log=print, client: MemoryClient | 
         log("已有蒸馏进程在跑（拿不到锁），退出")
         result["error"] = "locked"
         return result
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     spec = cfg.section("distill")
     try:
         for item in targets:
@@ -316,6 +363,10 @@ def drain(cfg, session_id: str | None = None, log=print, client: MemoryClient | 
                     result["entries"] += written
                     log(f"    提炼 {len(entries)} 条，写入 {written} 条"
                         f"（tokens {usage.get('total_tokens', '?')}）")
+                    if usage.get("_redacted"):
+                        log(f"    发送前已脱敏 {usage['_redacted']} 处"
+                            f"（{'、'.join(usage.get('_redacted_labels') or [])}）"
+                            "—— 规则与提交前的泄漏扫描同一份")
                 except Exception as e:  # noqa: BLE001
                     result["failed"] += 1
                     log(f"    ⚠ 失败：{type(e).__name__} {str(e)[:120]}")
@@ -335,7 +386,7 @@ def drain(cfg, session_id: str | None = None, log=print, client: MemoryClient | 
 def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
     """从记忆层重建 `沉淀/*.md`，保证可读副本与库一致（索引腐化的同类问题）。"""
     import collections
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     try:
         items = client.search_by_tag(["kind:knowledge"], match_all=True, n=1000)
     except Exception as e:  # noqa: BLE001

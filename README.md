@@ -87,13 +87,32 @@ $ aml search "内存快照比对" --phase P3
 
 ## 一键安装
 
+> **先钉版本再装。** 下面所有命令的 ref 都写 `v0.1.0` 这种 **tag**，不写 `main`：
+> 分支的内容随时会变，`install.sh @main` 等于"每次安装都执行别人刚推的最新代码"，
+> 出了事也没法复现。开发时才用 `-Ref main` / `AML_REF=main`（脚本会为此打印一句提醒）。
+
 **Windows（PowerShell）**
+
+```powershell
+# 推荐：先落盘看一眼，再带着 tag 跑（装的东西与你看的脚本是同一版）
+irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/v0.1.0/install.ps1 -OutFile install.ps1
+notepad install.ps1
+.\install.ps1 -Ref v0.1.0
+```
+
+图省事也可以一行装（**不钉版本**，脚本会用 `main`）：
 
 ```powershell
 powershell -c "irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.ps1 | iex"
 ```
 
 **macOS / Linux**
+
+```sh
+AML_REF=v0.1.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/kh859278/agent-memory-layer/v0.1.0/install.sh)"
+```
+
+图省事（**不钉版本**）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.sh | sh
@@ -103,14 +122,8 @@ curl -fsSL https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/in
 （优先 `uv`，其次 `pipx`，最后 `pip --user`）→ 可选装上本地后端 `mcp-memory-service`
 → `aml init` + `aml doctor`。**幂等**（装过就跳过）、不需要管理员、不改系统目录。
 
-想先看一眼再跑（推荐，尤其是 `| sh` 这种形式）：
-
-```powershell
-irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.ps1 -OutFile install.ps1; notepad install.ps1; .\install.ps1
-```
-
-常用开关：`-DryRun`（只看会执行什么）/ `-Upgrade` / `-NoBackend` / `-NoInit`
-（`sh install.sh --dry-run --upgrade --no-backend --no-init`）。
+常用开关：`-DryRun`（只看会执行什么）/ `-Upgrade` / `-NoBackend` / `-NoInit` / `-Ref <tag>`
+（`sh install.sh --dry-run --upgrade --no-backend --no-init`，ref 走 `AML_REF`）。
 
 ### 只想装 CLI 本体（自己管后端）
 
@@ -273,13 +286,20 @@ decision 730 天——技术结论会过期，`aml review` 到点提醒你复核
 装了很多 skill（尤其从 GitHub 抄来的）迟早遇到三件事：不知道哪些过时了、
 不知道自己改过哪些、更新时怕把改动冲掉。
 
-**三条安全闸门**（模块存在的理由）：
+**四条安全闸门**（模块存在的理由）：
 
 | 情况 | 处理 |
 |---|---|
 | 元数据有 `local_patch`（明确标注"我改过"） | **永不覆盖**，上游新版只暂存到 `state/patrol/_pending/` |
 | `local_diff: true`，或本地内容指纹 ≠ 记录（本地被动过） | **不覆盖**，只暂存 + 播报提醒 |
-| 本地干净 | 备份到 `state/patrol/_backup/` → 覆盖 → 更新元数据 |
+| 本地干净，但**没有批准凭据**（`baseline_hash`：从没被人批过） | **不覆盖**，只暂存 + 给恢复命令（2026-09-22 加） |
+| 本地干净 + 已批准 + 上游没新增未声明的高危能力 | 备份到 `state/patrol/_backup/` → 覆盖 → 更新元数据 |
+
+> 第三条是 2026-09-22 补的：原来"状态是 `active`"就够了，而 `infer_state()` 会把
+> "有元数据 + 本地干净"的技能**推断**成 `active` —— 等于让从没被人看过的技能白拿自动更新权
+> （本机实测 26/38 个技能处于该状态）。现在自动更新必须有**人给过的批准凭据**
+> （`aml patrol accept <名>`，或 `aml patrol lifecycle <名> approved`），批准绑定内容 hash，
+> 本地内容一改就作废。恢复命令会直接写在拦截理由里，不用去翻文档。
 
 **上游探测按代价分三层**（实战：GitHub 时通时断，API 匿名限流 60 次/小时）：
 
@@ -345,9 +365,20 @@ schtasks /Create /TN "aml-patrol" /SC DAILY /ST 09:30 ^
 ## 隐私与安全
 
 - **采集、嵌入、检索全在本机**；只有"蒸馏"这一步会调你指定的 LLM API（可不配 = 不蒸馏）。
+- **蒸馏发送前会脱敏**（2026-09-22 加）：密钥/邮箱/本机路径/自定义屏蔽词先盖成 `［已脱敏］`，
+  用的是与下面那个泄漏扫描**同一份规则**（`src/aml/redact.py`）；脱掉几处会打给你看。
+  关掉要显式写 `distill.redact: false`。
+- **key 只认显式来源**：`DISTILL_API_KEY` 环境变量 → 配置 `distill.api_key`。
+  老行为（从 `~/.dsh/.credentials.yaml` 里正则抠 key）保留但**默认关**，
+  要沿用得显式写 `distill.allow_dsh_credentials: true`。
 - 本仓库**不含任何用户内容**：状态、日志、知识库正文、会话原文都在 `.gitignore` 之外的数据目录里。
-- CI 里跑一个内容泄漏扫描（`tools/scrub_check.py`）：绝对路径、凭据、邮箱、手机号、自定义屏蔽词。
-  本地也能用：`python tools/scrub_check.py --staged`（只看将要提交的内容）。
+- CI 里跑一个内容泄漏扫描（`tools/scrub_check.py`）：绝对路径、凭据、邮箱、手机号、自定义屏蔽词，
+  以及**二进制数据库直接判红**（`.db`/`.sqlite` 不再"跳过"）。屏蔽词表支持
+  `tools/scrub_blocklist.local.txt` 本地副本（已 gitignore）。本地也能用：
+  `python tools/scrub_check.py --staged`（只看将要提交的内容）。
+- **记忆后端默认没有鉴权**（它只绑 `127.0.0.1`）。本仓库侧提供 `memory_api_token` 配置：
+  填上后所有 HTTP 调用带 `Authorization: Bearer`，配合反代或后端自带的鉴权即可；
+  真正的访问控制要在那个服务上做，`aml` 管不到。
 
 ## 目录
 

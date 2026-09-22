@@ -18,7 +18,7 @@ import json
 import sqlite3
 import time
 
-from .http import MemoryClient
+from .http import MemoryClient, client_for
 
 MISSING_SQL = """SELECT m.rowid, m.content, m.tags, m.metadata
                  FROM memories m
@@ -125,7 +125,7 @@ def backfill(cfg, apply: bool = False, limit: int = 0, client: MemoryClient | No
     if limit:
         rows = rows[:limit]
 
-    client = client or MemoryClient(cfg.api)
+    client = client or client_for(cfg)
     ok = failed = 0
     started = time.time()
     for index, (rowid, content, tags_raw, meta_raw) in enumerate(rows, 1):

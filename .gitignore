@@ -9,6 +9,7 @@ vault/
 沉淀/
 索引.md
 *.local.yaml
+*.local.txt
 config.yaml
 *.credentials*
 .env

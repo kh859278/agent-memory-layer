@@ -87,15 +87,27 @@ def test_live_roots_skips_missing_paths(tmp_path):
 # -------------------------------------------------------- 三条安全闸门
 
 def test_gate_clean_local_gets_updated(tmp_path):
+    """第三条闸门：本地干净 → 备份后覆盖。**前提是人批准过**（2026-09-22 收紧）。"""
     cfg = make_cfg(tmp_path, [tmp_path / "live"])
     live = make_skill(str(tmp_path / "live"), "s1", body="旧")
     up = make_skill(str(tmp_path / "up"), "s1", body="新")
     meta = {"name": "s1", "commit": "old", "content_hash": skills.dir_hash(live),
             "upstream_hash": "stalehash", "local_diff": False}
+    # 没批准过 → 只暂存（拿不到自动更新权）
     action, why = update.update_one(cfg, "s1", live, meta, skills.meta_path(live), up, "newsha")
+    assert action == "gated" and "只暂存待批" in why
+    assert "旧" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+    # 人批准这一版之后：**再来的上游新版**才会真的落地（上一轮已经暂存过了，
+    # 同一版不会重复触发 —— 所以这里换一版上游内容）
+    from aml.patrol import capability
+    capability.record_approval(cfg, "s1", live, meta=meta, log=lambda *_: None)
+    up2 = make_skill(str(tmp_path / "up2"), "s1", body="更新版")
+    meta2 = {"name": "s1", "commit": "newsha", "content_hash": skills.dir_hash(live),
+             "upstream_hash": skills.dir_hash(up), "local_diff": False}
+    action, _ = update.update_one(cfg, "s1", live, meta2, skills.meta_path(live), up2, "sha2")
     assert action == "updated"
-    assert "新" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
-    assert meta["commit"] == "newsha" and meta["local_diff"] is False
+    assert "更新版" in open(os.path.join(live, "SKILL.md"), encoding="utf-8").read()
+    assert meta2["commit"] == "sha2" and meta2["local_diff"] is False
 
 
 def test_gate_local_edit_is_only_staged(tmp_path):

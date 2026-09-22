@@ -16,21 +16,24 @@
 
 ## 1. 装 CLI（不需要管理员）
 
+**ref 写 tag，别写 main**（分支随时会变 = 每次安装都在跑上游最新代码，出问题无法复现）：
+
 ```bash
-uv tool install "git+https://github.com/kh859278/agent-memory-layer.git"   # 或
-pipx install "git+https://github.com/kh859278/agent-memory-layer.git"      # 或
-pip install "git+https://github.com/kh859278/agent-memory-layer.git"
+uv tool install "git+https://github.com/kh859278/agent-memory-layer.git@v0.1.0"   # 或
+pipx install "git+https://github.com/kh859278/agent-memory-layer.git@v0.1.0"      # 或
+pip install "git+https://github.com/kh859278/agent-memory-layer.git@v0.1.0"
 ```
 
 Windows 一键脚本（幂等、不动系统目录）：
 
 ```powershell
-irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/main/install.ps1 -OutFile install.ps1
+irm https://raw.githubusercontent.com/kh859278/agent-memory-layer/v0.1.0/install.ps1 -OutFile install.ps1
 notepad install.ps1        # 想先看内容就先看一眼
 .\install.ps1 -DryRun      # 只看会执行什么
+.\install.ps1 -Ref v0.1.0  # 钉版本安装（不给 -Ref 就用 main，脚本会提醒）
 ```
 
-> PyPI 上还没有这个包（分发名被别的项目占了），所以上面都是**从 git 装**。
+> 装的是某个 tag 的快照；`-Ref main` / `AML_REF=main` 是开发用法，脚本会为此打印一句提醒。
 
 ## 2. 建数据目录
 
