@@ -125,6 +125,9 @@ def test_store_tool_layers_knowledge_vs_project(tmp_path):
     assert "kind:knowledge" in knowledge_save["tags"]
     assert "reusable:true" in knowledge_save["tags"]
     assert knowledge_save["metadata"]["review_after"]        # pitfall 有复核期
+    # 来源要落进 metadata（检索渲染会标出来源，见 docs/TRUST-MODEL.md）
+    assert knowledge_save["metadata"]["src"] == "mcp-store"
+    assert knowledge_save["metadata"]["by"] == "agent"
     assert knowledge_save["conversation_id"] == "mcp-store"
 
 

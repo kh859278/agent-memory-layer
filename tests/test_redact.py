@@ -46,15 +46,40 @@ def test_placeholders_are_not_hits():
         assert redact.find_hits(line) == [], line
 
 
-def test_scrub_check_shares_the_same_rule_table():
-    """扫描器必须 import 同一份规则表（而不是自己再抄一遍正则）。"""
+def _load_scrub():
+    """把 tools/scrub_check.py 当模块加载（它不是包的一部分，CI 的 scrub job 也不装包）。"""
     import importlib.util
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "tools", "scrub_check.py")
     spec = importlib.util.spec_from_file_location("scrub_check_probe", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.find_hits is redact.find_hits
+    return module
+
+
+def test_scrub_check_shares_the_same_rule_table():
+    """扫描器必须 import 同一份规则表（而不是自己再抄一遍正则）。"""
+    assert _load_scrub().find_hits is redact.find_hits
+
+
+def test_scanner_reads_non_utf8_files(tmp_path):
+    """非 UTF-8 的文件不能隐身（2026-09-22 补的洞）。
+
+    实证：PowerShell 5.1 的 `>` 重定向写 UTF-16LE，ASCII 之间夹 NUL，
+    按 UTF-8 读的话本机路径根本匹配不上 —— 仓库里那个 `err39.txt` 就是这么公开躺了几天的。
+    """
+    scrub = _load_scrub()
+    utf16 = tmp_path / "dump.txt"
+    utf16.write_bytes((f"路径 {FAKE_WIN} 结束\n").encode("utf-16"))
+    hits = scrub.scan_file(str(utf16), [])
+    assert hits, "UTF-16 文件里的本机路径必须被抓到"
+    assert "utf-16" in hits[0][0]                      # 报告里要标出"这次是按什么编码读的"
+    assert any(label.startswith("绝对路径") for _, _, label, _ in hits)
+
+    # GBK：中文 Windows 的默认写法。中文本身解不出来时，屏蔽词也会一起失效
+    gbk = tmp_path / "gbk.txt"
+    gbk.write_bytes("客户 ACME 的项目\n".encode("gbk"))
+    assert [h for h in scrub.scan_file(str(gbk), ["ACME"]) if h[2] == "屏蔽词"]
 
 
 # ------------------------------------------------------------------ 脱敏

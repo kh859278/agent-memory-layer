@@ -100,6 +100,41 @@ def test_cascade_uses_loosest_tier_with_hits(tmp_path):
     assert "[沉淀|tooling|2026-08-01|0.75]" in r.lines[0]
 
 
+def test_source_is_shown_and_human_written_ranks_first(tmp_path):
+    """来源影响排序与展示（2026-09-22）：同分时人写的排前面，来源要看得见。
+
+    注意加成只**在档位内**乘（`authority_factor` 不参与档位选择），
+    所以它不会让本来搜得到的记忆变成搜不到 —— 这里顺带钉死这一点。
+    """
+    cfg = make_cfg(tmp_path)
+    hits = [
+        (0.80, memory("机器自动写的一条", ["kind:knowledge", "domain:x"],
+                      meta={"src": "distill"})),
+        (0.80, memory("人沉淀的一条", ["kind:knowledge", "domain:x"],
+                      meta={"by": "human"})),
+    ]
+    r = Retriever(cfg, client=FakeClient(hits)).search("q", phase="P2")
+    assert r.diag["tier_used"] == 0.80            # 加成没有把门槛抬高
+    assert "人沉淀的一条" in r.lines[0] and "|人工]" in r.lines[0]
+    assert "机器自动写的一条" in r.lines[1] and "|蒸馏]" in r.lines[1]
+
+
+def test_source_label_covers_the_write_paths(tmp_path):
+    """四种写入路径各自的标签：会话流水 / 蒸馏 / MCP 写入 / 技能正文。"""
+    cfg = make_cfg(tmp_path)
+    hits = [
+        (0.80, memory("会话原文", ["kind:task"], meta={})),
+        (0.80, memory("蒸馏产物", ["kind:knowledge"], meta={"src": "distill"})),
+        (0.80, memory("agent 写的", ["kind:knowledge"], meta={"src": "mcp-store", "by": "agent"})),
+        (0.80, memory("技能正文", ["kb:技能原始", "kind:procedure"], meta={})),
+    ]
+    r = Retriever(cfg, client=FakeClient(hits)).search("q", phase="P2", n=4,
+                                                      include_procedure=True)
+    text = "\n".join(r.lines)
+    for label in ("会话", "蒸馏", "agent", "工具"):
+        assert f"|{label}]" in text, label
+
+
 def test_cascade_falls_all_the_way_to_loosest_tier(tmp_path):
     cfg = make_cfg(tmp_path)
     hits = [(0.66, memory("勉强相关", ["kind:knowledge"]))]

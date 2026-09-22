@@ -192,6 +192,10 @@ class Server:
             metadata = {}
             if args.get("title"):
                 metadata["title"] = args["title"]
+            # 记下来源（2026-09-22 加）：检索渲染时会把"谁写的"标出来，
+            # 让人一眼看出这条是 agent 通过 MCP 写的，而不是人沉淀的（见 docs/TRUST-MODEL.md）。
+            metadata["src"] = "mcp-store"
+            metadata["by"] = "agent"
             # 分层是硬规则（见 docs/PROTOCOL.md）：给了 project 就是"项目专属事实"，
             # 不打 kind:knowledge；只有跨项目可复用的经验才进沉淀层、才有复核期。
             explicit_knowledge = any(t.startswith("kind:") for t in tags)

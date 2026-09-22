@@ -18,7 +18,7 @@ import os
 import re
 import sqlite3
 
-from .feedback import rank_factor, reliability
+from .feedback import authority_factor, authority_label, rank_factor, reliability
 from .http import MemoryAPIError, MemoryClient, client_for
 from .migrate import is_procedure
 
@@ -199,10 +199,13 @@ class Retriever:
             top = pool[0][0]
             pool = [(s, m) for s, m in pool if s >= max(tier_used, top - margin)]
 
-        # 同档位内按"可靠度"重排：被用过且有效的排前面，没数据的**不惩罚**（系数 1.0）。
-        # 只在档位内动顺序，不改分数门槛 —— 否则一条高分新记忆会因"还没被用过"被挤出结果。
+        # 同档位内按"可靠度 × 来源"重排：被用过且有效的排前面，人写的给一点加成，
+        # 没数据的**不惩罚**（系数 1.0）。只在档位内动顺序，不改分数门槛 ——
+        # 否则一条高分新记忆会因"还没被用过"被挤出结果。
         if pool:
-            pool = sorted(pool, key=lambda item: -(item[0] * rank_factor(item[1].get("metadata") or {})))
+            pool = sorted(pool, key=lambda item: -(
+                item[0] * rank_factor(item[1].get("metadata") or {})
+                * authority_factor(item[1].get("metadata") or {}, item[1].get("tags"))))
 
         # 关键词兜底：语义没命中（或命中太少）时才用，且排在最后
         kw_pool = []
@@ -275,7 +278,12 @@ class Retriever:
             # 只有真的有使用数据时才显示可靠度，避免给每条都挂个没意义的 1.00
             rel = reliability(meta)
             rel_text = f"|rel {rel:.2f}" if rel is not None else ""
-            lines.append(f"[{layer}|{domain}|{stamp}|{score}{rel_text}] {stale}{content[:result_chars]}")
+            # 来源（谁写的/哪来的）：认得出来就标 —— 让"这条是机器自动写的"看得见，
+            # 而不是靠调用方去猜。认不出来的老数据保持原样（不显示）。
+            src = authority_label(meta, tags)
+            src_text = f"|{src}" if src else ""
+            lines.append(f"[{layer}|{domain}|{stamp}|{score}{rel_text}{src_text}] "
+                         f"{stale}{content[:result_chars]}")
             hashes.append(m.get("content_hash") or "")
             if used >= budget:
                 break

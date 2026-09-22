@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# 显式声明最小权限（2026-09-22 加）：不要靠平台默认值 ——
+# 这个 workflow 只读代码、跑测试，绝不需要写权限；默认值哪天变了不该把仓库一起带走。
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}

@@ -13,6 +13,11 @@
 字段口径（写在 metadata 里，不动后端 schema）：
     usage_count / success_count / failure_count
     last_used_at / last_failed_at / last_verified_at
+
+第四条能力（2026-09-22 加）：**来源影响排序与展示** ——
+`authority_label()` / `authority_factor()`：人写的/人复核过的给一点加成并标出来源，
+机器自动写的至少**在结果里看得见**（谁写的、哪来的），但**不降权**（缺信息不惩罚）。
+见 `docs/TRUST-MODEL.md` 的"权威性"一节。
 """
 from __future__ import annotations
 
@@ -52,6 +57,50 @@ def rank_factor(meta: dict, floor: float = 0.85, ceiling: float = 1.15) -> float
     if value is None:
         return 1.0
     return round(floor + (ceiling - floor) * value, 4)
+
+
+# --------------------------------------------------------------- 来源（谁写的）
+
+# 人写的/人复核过 → 排序给小加成；其余一律 1.0。
+# **为什么只给加成、不给人以外降权**：与 reliability 同一条原则 —— 缺信息不惩罚。
+# 少一条来源字段就把一条好记忆压下去，是拿治理换噪音（而且老数据全都没有来源字段）。
+HUMAN_BONUS = 1.10
+
+
+def authority_label(meta: dict, tags=None) -> str:
+    """这条记忆是**谁写的/哪来的** → 短标签（认不出来就返回空串）。
+
+    判据都取自已有字段，不新增 schema：`metadata.by` / `metadata.authority` /
+    `metadata.src` / `metadata.last_verified_at` / `authority:*` 标签 / `kind:task|reply`。
+    顺序即优先级：程序性 > 人工 > 蒸馏 > agent 写入 > 会话流水。
+    """
+    meta = meta or {}
+    tags = list(tags or [])
+    authority = str(meta.get("authority") or "").strip().lower()
+    by = str(meta.get("by") or "").strip().lower()
+    src = str(meta.get("src") or "").strip().lower()
+    if (authority == "procedure" or "authority:procedure" in tags
+            or "kind:procedure" in tags):
+        return "工具"
+    if (authority == "human" or by == "human" or meta.get("last_verified_at")
+            or "authority:human" in tags):
+        return "人工"
+    if src == "distill" or authority == "generated":
+        return "蒸馏"
+    if src == "mcp-store" or by == "agent":
+        return "agent"
+    if "kind:task" in tags or "kind:reply" in tags:
+        return "会话"
+    return ""
+
+
+def authority_factor(meta: dict, tags=None) -> float:
+    """按来源给的排序系数：**只有"人工"加成，其余中性**（见 `HUMAN_BONUS`）。
+
+    和 `rank_factor` 一样，只该在同档位内乘（`retrieval.py` 里就是这么用的）——
+    不参与档位选择，所以它永远不会让一条本来能搜到的记忆变成搜不到。
+    """
+    return HUMAN_BONUS if authority_label(meta, tags) == "人工" else 1.0
 
 
 def _find(client: MemoryClient, content_hash: str):

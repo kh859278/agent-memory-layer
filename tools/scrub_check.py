@@ -11,9 +11,22 @@
   4. 自定义屏蔽词：`tools/scrub_blocklist.txt`（每行一个，`#` 注释）—— 客户名/项目名放这里，
      **不要**提交真实的屏蔽词文件内容（该文件默认只有注释）
   5. **二进制数据库直接判红**（2026-09-22 加，见下）
+  6. **按文件真实编码读**（2026-09-22 加，见下）
 
 规则表本身在 `src/aml/redact.py`（**唯一真相**）：同一份正则也用在"蒸馏前给会话脱敏"那条
 发送路径上。以前两边各写一份，缝隙就是"扫描器认得的、发送路径不认得"。
+
+### 为什么必须认编码（2026-09-22 补的洞）
+
+第一版一律 `open(..., encoding="utf-8", errors="replace")` 读文件，于是**非 UTF-8 的文件
+等于隐身**：PowerShell 5.1 的 `>` 重定向写出 UTF-16LE，ASCII 字符之间夹着 NUL 字节，
+于是本机路径这种模式在字节层面根本不连续 → 匹配不上；GBK 文件的中文全被替换成 U+FFFD，
+屏蔽词也一起失效。实测反例就在本仓库里：`err39.txt` 是 PowerShell 的重定向产物（UTF-16LE），
+里面写着本机用户名与绝对路径，公开躺了几天而扫描器一次都没报。同内容造两个探针文件对照，
+UTF-8 版本报 2 处命中、UTF-16LE 版本 0 处。
+
+现在：先看 BOM 与 NUL 判 UTF-16，再试 UTF-8，最后退 GBK；**非 UTF-8 的文件会在输出里标出来**，
+让你知道"这次是按哪种写法读的"。
 
 用法：
     python tools/scrub_check.py            # 扫全仓库（git 跟踪的 + 未忽略的新文件）
@@ -121,25 +134,68 @@ def target_files(staged: bool, all_files: bool = False) -> list:
     return files
 
 
-def scan_file(path: str, blocklist: list) -> list:
-    """扫一个文件：[(相对路径, 行号, 标签, 片段)]。规则来自 `aml.redact`。"""
+def read_text(path: str) -> tuple:
+    """把文件读成文本，**认得几种常见编码**：返回 `(文本, 编码名)`。
+
+    顺序：BOM / NUL → UTF-16；否则 UTF-8；再否则 GBK（中文 Windows 的默认写法）；
+    最后 latin-1 兜底（保证"读得出来"，读错也比漏扫好 —— 漏扫才是真的没防护）。
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in raw[:4096]:
+        for enc in ("utf-16", "utf-16-le", "utf-16-be"):
+            try:
+                return raw.decode(enc), enc
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+    try:
+        return raw.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+    for enc in ("gbk", "cp936", "latin-1"):
+        try:
+            return raw.decode(enc), enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace"), "utf-8/replace"
+
+
+def scan_file(path: str, blocklist: list, encodings: dict | None = None) -> list:
+    """扫一个文件：[(相对路径, 行号, 标签, 片段)]。规则来自 `aml.redact`。
+
+    `encodings` 传一个 dict 的话，会把"按非 UTF-8 读的文件 → 它的编码"记进去，
+    交给调用方汇总打印（这样人能看到"这次是按哪种写法读的"，而不是默认一切正常）。
+    """
     ext = os.path.splitext(path)[1].lower()
     rel = os.path.relpath(path, ROOT)
     if ext in DB_EXT:
         return [(rel, 0, "二进制数据库", f"{os.path.getsize(path)} 字节 —— 不该进仓库")]
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+        text, enc = read_text(path)
     except OSError:
         return []
+    if enc != "utf-8":
+        # 标在路径上：让人一眼看出"这次是按非默认写法读的"（编码本身就是可疑信号）
+        if encodings is not None:
+            encodings[rel] = enc
+        rel = f"{rel}({enc})"
     hits = []
-    for lineno, line in enumerate(lines, 1):
+    for lineno, line in enumerate(text.splitlines(), 1):
         for label, sample in find_hits(line):
             hits.append((rel, lineno, label, sample))
         for word in blocklist:
             if word and word in line:
                 hits.append((rel, lineno, "屏蔽词", word))
     return hits
+
+
+def _print_encodings(encodings: dict) -> None:
+    """按非 UTF-8 读的文件要显式报出来（否则"扫过了"与"按默认写法扫过了"分不清）。"""
+    if not encodings:
+        return
+    items = "、".join(f"{rel}({enc})" for rel, enc in sorted(encodings.items())[:8])
+    more = f" …还有 {len(encodings) - 8} 个" if len(encodings) > 8 else ""
+    print(f"   ⚠ {len(encodings)} 个文件不是 UTF-8，已按各自编码读取：{items}{more}")
 
 
 def main() -> int:
@@ -152,8 +208,9 @@ def main() -> int:
     blocklist = load_blocklist()
     files = target_files(args.staged, all_files=args.all)
     hits = []
+    encodings: dict = {}
     for path in files:
-        hits += scan_file(path, blocklist)
+        hits += scan_file(path, blocklist, encodings)
 
     if hits:
         print(f"❌ 内容泄漏扫描：{len(hits)} 处命中（{len(files)} 个文件）")
@@ -165,11 +222,13 @@ def main() -> int:
         print("\n处置：改成占位符（如 C:\\Users\\<you>\\...）或用配置/环境变量传入；"
               "客户名/项目名加进 tools/scrub_blocklist.txt（该文件不进仓库）；"
               "数据库文件搬出仓库（它里面有整库记忆，正则救不了）。")
+        _print_encodings(encodings)
         return 1
     if not args.quiet:
         scope = "含被忽略文件" if args.all else "git 跟踪 + 未忽略的新文件"
         print(f"✅ 内容泄漏扫描通过（{len(files)} 个文件，范围：{scope}，"
               f"屏蔽词 {len(blocklist)} 个）")
+        _print_encodings(encodings)
         if not blocklist:
             print("   ⚠ 屏蔽词 0 个：客户名/项目名这一层目前**没有防护**，"
                   "请把词写进 tools/scrub_blocklist.txt")

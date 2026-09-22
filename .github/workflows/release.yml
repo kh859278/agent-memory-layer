@@ -1,0 +1,51 @@
+name: release
+
+# 免密钥发布（PyPI Trusted Publishing / OIDC）—— 2026-09-22 加。
+#
+# 为什么值得单开一个 workflow：长期 API token 一旦泄露，等于任何人都能往 PyPI 推一版
+# "我们的"包；而发布动作发生在一台同时跑多个 agent、它们又能改仓库的机器上，
+# 长期凭据放在那里风险不对称。OIDC 让"凭据"变成一次性、几分钟就失效的东西，且不落盘。
+#
+# 配置（在 PyPI 与 GitHub 各点一次，之后不用再管）：
+#   1. PyPI → 项目 aml-memory → Publishing → 添加 Trusted Publisher：
+#      Owner=kh859278  Repository=agent-memory-layer  Workflow=release.yml  Environment=pypi
+#   2. GitHub → Settings → Environments → 建一个叫 `pypi` 的环境
+#      （可以加 required reviewers，等于"发布要人点一下"，推荐）
+#
+# 触发方式：**先只用 workflow_dispatch（手动）**。等上面两项配好、跑通一次之后，
+# 再把下面的 `push: tags` 打开，让打 tag 自动发布；在那之前保持手动，
+# 免得打 tag 时因为没配好而红一片。
+on:
+  workflow_dispatch:
+  # push:
+  #   tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # OIDC 换取一次性上传凭据，这是唯一的写权限
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 构建前先跑一遍守门（发布不该绕过测试与泄漏扫描）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          ruff check src tests tools
+          python -m pytest -q
+          python tools/scrub_check.py
+      - name: 构建 wheel + sdist
+        run: |
+          python -m pip install build
+          python -m build
+      - name: 发布到 PyPI（OIDC，无 token）
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # 想更严可以把上面这行钉成 commit SHA；`release/v1` 是上游推荐的滚动引用
