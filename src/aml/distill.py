@@ -430,6 +430,32 @@ def _knowledge_items(client) -> tuple:
         return [], f"{type(e).__name__} {e}（分页也失败：{pages_err}）"
 
 
+def _looks_generated(path) -> bool:
+    """这个 `沉淀/*.md` 是我们生成的（因此可以安全删除）吗？
+
+    认**两种**历史格式，缺一不可的判据是"没有任何手写痕迹"：
+
+      1. 现行格式：首行 `# 沉淀：<domain>`，第二行含"由记忆层重建"
+      2. 旧格式：没有标题行，第一个非空行是 `## <条目标题>`，
+         且前 6 行里有 `- 类型：… ｜ … 可信度：…` 这种条目元数据行
+
+    为什么要认第二种（2026-09-24 实测）：旧生成器 `记忆层\\distill_worker.py` 写下的
+    17 个文件在去重后成了孤儿 —— 内容已并入别的 domain，文件却还在，
+    人面因此显示库里没有的条目。只认新格式的话它们永远清不掉。
+    `AGENTS.md` 这类手写文件（首行 `# 沉淀层…`）两种格式都不匹配，不会被删。
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    if lines and lines[0].startswith("# 沉淀："):
+        return any("由记忆层重建" in ln for ln in lines[:3])
+    body = [ln for ln in lines[:6] if ln.strip()]
+    if body and body[0].startswith("## "):
+        return any(ln.startswith("- 类型：") and "可信度：" in ln for ln in lines[:6])
+    return False
+
+
 def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
     """从记忆层重建 `沉淀/*.md`，保证可读副本与库一致（索引腐化的同类问题）。"""
     import collections
@@ -463,15 +489,12 @@ def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
     for old in sorted(sink.glob("*.md")):
         if old.stem in by_domain:
             continue
-        try:
-            head = old.read_text(encoding="utf-8", errors="replace").splitlines()[:3]
-        except OSError:
+        if not _looks_generated(old):
             continue
-        if head and head[0].startswith("# 沉淀：") and any("由记忆层重建" in ln for ln in head):
-            try:
-                old.unlink()
-                removed.append(old.name)
-            except OSError:
-                pass
+        try:
+            old.unlink()
+            removed.append(old.name)
+        except OSError:
+            pass
     return {"domains": len(by_domain), "entries": len(items), "dir": str(sink),
             "removed": removed}

@@ -84,3 +84,28 @@ def test_rebuild_falls_back_when_paging_unavailable(tmp_path):
     info = distill.rebuild_markdown(cfg, client=_NoPaging())
     assert info["entries"] == 1
     assert (cfg.knowledge_dir / "沉淀" / "fallback.md").is_file()
+
+
+def test_rebuild_also_removes_legacy_format_orphans(tmp_path):
+    """旧生成器（distill_worker.py）写的文件没有标题行，只认新格式的话永远清不掉。"""
+    cfg = cfgmod.load({"aml_home": str(tmp_path)})
+    sink = cfg.knowledge_dir / "沉淀"
+    sink.mkdir(parents=True, exist_ok=True)
+    (sink / "legacy.md").write_text(
+        "\n## 一条旧格式条目\n\n"
+        "- 类型：pitfall ｜ 可信度：medium ｜ 来源：DSH 归档会话 abcd1234（整理） ｜ 复核：2027-01-01\n"
+        "- 线索：某次\n\n正文\n", encoding="utf-8")
+    (sink / "handwritten.md").write_text("# 手写说明\n\n不是生成的\n", encoding="utf-8")
+
+    info = distill.rebuild_markdown(cfg, client=_FakeClient())
+    assert not (sink / "legacy.md").exists()
+    assert (sink / "handwritten.md").is_file()
+    assert "legacy.md" in info["removed"]
+
+
+def test_looks_generated_distinguishes_handwritten(tmp_path):
+    p = tmp_path / "x.md"
+    p.write_text("# 沉淀层（跨项目可复用知识）\n\n手写\n", encoding="utf-8")
+    assert distill._looks_generated(p) is False
+    p.write_text("# 沉淀：foo\n\n> 由记忆层重建（2026-01-01），共 1 条。\n", encoding="utf-8")
+    assert distill._looks_generated(p) is True
