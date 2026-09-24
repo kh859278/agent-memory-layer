@@ -403,14 +403,40 @@ def drain(cfg, session_id: str | None = None, log=print, client: MemoryClient | 
     return result
 
 
+def _knowledge_items(client) -> tuple:
+    """取全部 `kind:knowledge` 条目，返回 `(items, error)`。
+
+    **为什么不用 `search_by_tag(n=1000)`**：那是硬上限。库里一旦超过 1000 条，
+    人面镜像就会**静默少掉后面的条目**（2026-09-24 实测：库内 1 123 条，
+    重建结果只报 `entries: 1000`，少 123 条 = 11%）。所以优先走分页遍历，
+    分页端点不可用时才退回老路径（并放宽上限）。
+    """
+    pages_err = None
+    try:
+        items = []
+        for m in client.iter_memories(tag="kind:knowledge"):
+            tags = m.get("tags") or []
+            if isinstance(tags, str):
+                tags = [t.strip() for t in tags.split(",") if t.strip()]
+            if "kind:knowledge" in tags:
+                items.append(m)
+        if items:
+            return items, None
+    except Exception as e:  # noqa: BLE001 - 分页不可用就退回老路径
+        pages_err = f"{type(e).__name__} {e}"
+    try:
+        return client.search_by_tag(["kind:knowledge"], match_all=True, n=100000), None
+    except Exception as e:  # noqa: BLE001
+        return [], f"{type(e).__name__} {e}（分页也失败：{pages_err}）"
+
+
 def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
     """从记忆层重建 `沉淀/*.md`，保证可读副本与库一致（索引腐化的同类问题）。"""
     import collections
     client = client or client_for(cfg)
-    try:
-        items = client.search_by_tag(["kind:knowledge"], match_all=True, n=1000)
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"{type(e).__name__} {e}"}
+    items, err = _knowledge_items(client)
+    if err:
+        return {"error": err}
     by_domain = collections.defaultdict(list)
     for m in items:
         meta = m.get("metadata") or {}
@@ -430,4 +456,22 @@ def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
                       (m.get("content") or "").strip(), ""]
         # 用 write_lf 而不是 Path.write_text(newline=...) —— 后者是 Python 3.10+ 才有的参数
         write_lf(sink / f"{domain}.md", "\n".join(lines) + "\n")
-    return {"domains": len(by_domain), "entries": len(items), "dir": str(sink)}
+    # 清理"上次重建留下、这次已经没有的领域文件"：合并/改 domain 之后旧文件会变成孤儿，
+    # 人面就会显示库里根本没有的条目。只删**我们自己生成的**（首行 `# 沉淀：` 且带重建标记），
+    # `AGENTS.md` 这类手写文件一概不碰。
+    removed = []
+    for old in sorted(sink.glob("*.md")):
+        if old.stem in by_domain:
+            continue
+        try:
+            head = old.read_text(encoding="utf-8", errors="replace").splitlines()[:3]
+        except OSError:
+            continue
+        if head and head[0].startswith("# 沉淀：") and any("由记忆层重建" in ln for ln in head):
+            try:
+                old.unlink()
+                removed.append(old.name)
+            except OSError:
+                pass
+    return {"domains": len(by_domain), "entries": len(items), "dir": str(sink),
+            "removed": removed}
