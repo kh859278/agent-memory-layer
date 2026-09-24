@@ -59,6 +59,23 @@ def project_of(cwd) -> str:
     return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "-", base)[:40]
 
 
+def domain_of(value) -> str:
+    """领域名归一：**一个人面文件必须能装下它**。
+
+    为什么需要（2026-09-24 实测）：库里出现了 12 条以 `<ktype>/<domain>` 形态写进来的
+    domain（`checklist/env-setup`、`pitfall/data-pipeline`、`tooling/web-deploy`…）。
+    带斜杠的 domain 映射不成 `沉淀/<domain>.md` 这个文件名，
+    于是这些条目**只在机器面存在、人面永远看不到** —— 两副面孔当场破功。
+
+    规则：分隔符（`/`、`\\`、空白）一律折成 `-`，连续 `-` 合并，去掉首尾 `-`；
+    空值回落到 `general`。**不做语义改写**（不猜"checklist 其实是 ktype"），
+    保持可逆 —— 语义层的一次性修正交给迁移脚本，不藏在写入路径里。
+    """
+    s = re.sub(r"[/\\\s]+", "-", str(value or "").strip())
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s or "general"
+
+
 def skip_path(path: str, parts) -> bool:
     """路径里含指定片段就跳过（默认挡 .dsh 内部目录与 node_modules）。"""
     p = str(path).replace("/", "\\").lower()

@@ -30,7 +30,7 @@ import urllib.request
 
 from .http import MemoryClient, client_for
 from .redact import redact
-from .text import write_lf
+from .text import domain_of, write_lf
 
 PROMPT = """下面是某个项目的**一段真实工作会话记录**（按时间排序，U=用户任务，A=agent 回复）。
 
@@ -38,7 +38,7 @@ PROMPT = """下面是某个项目的**一段真实工作会话记录**（按时�
 **不要**收录只对本项目成立的一次性事实（具体客户名、具体链接、某天的进度数字）、寒暄、以及没有信息量的短句。
 
 输出**严格的 JSON 数组**，每个元素字段：
-{"title":"≤20字标题","domain":"kebab-case领域如 env-windows/data-scraping/agent-workflow",
+{"title":"≤20字标题","domain":"一个 kebab-case 领域名，**只能有一个，且不许出现斜杠**（例：env-windows、data-scraping、agent-workflow）",
  "type":"pitfall|pattern|decision|tooling|checklist","body":"≤300字，自包含，脱离本项目也能看懂",
  "evidence":"简短来源线索","confidence":"high|medium|low"}
 
@@ -301,7 +301,7 @@ def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int
     for e in entries:
         if not isinstance(e, dict) or not e.get("body"):
             continue
-        domain = (e.get("domain") or "general").strip() or "general"
+        domain = domain_of(e.get("domain") or "general")
         ktype = (e.get("type") or "pattern").strip() or "pattern"
         content = f"【{e.get('title', '')}】{e['body']}"
         tags = ["kind:knowledge", "reusable:true", f"domain:{domain}", f"ktype:{ktype}",

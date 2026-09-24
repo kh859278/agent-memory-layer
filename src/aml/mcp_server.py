@@ -189,7 +189,25 @@ class Server:
 
         if name == "store":
             tags = list(args.get("tags") or [])
+            # 领域名归一 + **只留一个**（2026-09-24）：
+            # ① 调用方可能写成 `domain:checklist/env-setup`，带斜杠就映射不成 `沉淀/<domain>.md`，
+            #    条目只在机器面存在、人面看不到；
+            # ② 一个条目带多个 `domain:` 时，镜像与 metadata 只认**第一个**，
+            #    其余标签变成"只在机器面"的幽灵（实测 23 条，见 backups/domain-fix/）。
+            from .text import domain_of
+            kept_tags, dropped_domains, _seen = [], [], False
+            for t in tags:
+                if not t.startswith("domain:"):
+                    kept_tags.append(t)
+                elif not _seen:
+                    kept_tags.append(f"domain:{domain_of(t.split(':', 1)[1])}")
+                    _seen = True
+                else:
+                    dropped_domains.append(t)
+            tags = kept_tags
             metadata = {}
+            if dropped_domains:
+                metadata["dropped_domain_tags"] = dropped_domains
             if args.get("title"):
                 metadata["title"] = args["title"]
             # 记下来源（2026-09-22 加）：检索渲染时会把"谁写的"标出来，
