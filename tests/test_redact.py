@@ -38,6 +38,19 @@ def test_find_hits_flags_keys_emails_and_local_paths():
     assert any(label.startswith("绝对路径") for label in labels)
 
 
+def test_id_number_is_masked():
+    """身份证号（2026-09-24 加）：`对话记录/` 层实测有法人身份证号。
+
+    假号必须**运行时拼**：字面量写进文件的话，新规则会把测试文件自己判成泄漏。
+    """
+    fake_id = "110101" + "19900307" + "0001"
+    out, labels = redact.redact(f"法人身份证号 {fake_id}")
+    assert fake_id not in out
+    assert "身份证号" in labels
+    # 出生日期段不合法（13 月）的 18 位串不该被误判
+    assert redact.find_hits("订单号 110101199013070001") == []
+
+
 def test_placeholders_are_not_hits():
     """文档里的占位符是**设计上公开**的写法，不能判红（否则 CI 会被自己的文档拦住）。"""
     for line in (r"改成 C:\Users\<you>\... 或 C:\Users\<名>",
