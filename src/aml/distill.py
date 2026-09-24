@@ -276,10 +276,28 @@ def sink_markdown(cfg, entries, item) -> int:
     return written
 
 
+def session_key(session_id: str) -> str:
+    """会话的**规范短键**：去掉 `session-` 前缀后取前 8 位。
+
+    必须和 `ingest` 写进标签的那个键对齐（`session:<前8位>`），否则"知识 → 原会话"join 不上。
+
+    为什么会有这个函数（2026-09-24 审计）：`src_session` 历史上写进去过两种形态 ——
+    带 `session-` 前缀的 36 位全 id（1 432 条）与纯 8 位短 hex（16 条）。
+    直接按字符串比对时，join 成功率看起来只有 2%；**归一到核心 8 位后其实是 99.7%**。
+    也就是说这条链没断，只是没归一。写入侧统一用它，读取侧比较前也要归一。
+    """
+    s = str(session_id or "")
+    if s.startswith("session-"):
+        s = s[len("session-"):]
+    return s[:8]
+
+
 def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int:
     """写回记忆层：kind:knowledge + domain + 复核期。"""
     client = client or client_for(cfg)
     ok = 0
+    key = session_key(item.get("session_id") or item.get("short"))
+    full_id = str(item.get("session_id") or "")
     for e in entries:
         if not isinstance(e, dict) or not e.get("body"):
             continue
@@ -288,9 +306,11 @@ def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int
         content = f"【{e.get('title', '')}】{e['body']}"
         tags = ["kind:knowledge", "reusable:true", f"domain:{domain}", f"ktype:{ktype}",
                 f"confidence:{(e.get('confidence') or 'medium')}",
-                f"src_session:{item.get('short', '')}"]
+                f"src_session:{key}"]
         metadata = {"title": e.get("title", ""), "domain": domain, "ktype": ktype,
-                    "evidence": e.get("evidence", ""), "src_session": item.get("short", ""),
+                    "evidence": e.get("evidence", ""), "src_session": key,
+                    # 全 id 另存一份：短键用于和标签 join，全 id 用于精确回溯（两者都要有）
+                    "src_session_id": full_id, "src_agent": item.get("agent", ""),
                     "src": "distill", "review_after": review_after_for(ktype)}
         try:
             res = client.store(content, tags, metadata, conversation_id=f"distill:{item['session_id']}")
