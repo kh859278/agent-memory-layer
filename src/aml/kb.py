@@ -15,6 +15,7 @@ import re
 import shutil
 
 from .http import client_for
+from .redact import redact
 
 CHUNK = 280          # 嵌入模型有效窗口有限，块太大检索会糊
 OVERLAP = 40
@@ -235,7 +236,10 @@ def ingest_docs(cfg, dirs=None, exts=None, since: str | None = None, dry_run: bo
         return {"files": len(plan), "chunks": total_chunks, "dry_run": True}
 
     client = client_for(cfg)
-    ok = dup = err = done = 0
+    ingest_cfg = cfg.section("ingest")
+    do_redact = bool(ingest_cfg.get("redact", True))
+    extra_words = ingest_cfg.get("redact_words") or []
+    ok = dup = err = done = redacted = 0
     for name, path, parts in plan:
         try:
             mtime = dt.datetime.fromtimestamp(os.path.getmtime(path), dt.timezone.utc)
@@ -244,6 +248,11 @@ def ingest_docs(cfg, dirs=None, exts=None, since: str | None = None, dry_run: bo
         stamp = mtime.isoformat().replace("+00:00", "Z")
         tags = doc_tags(cfg, name, path, mtime)
         for i, part in enumerate(parts):
+            # 素材文件同样过一遍入库脱敏：凭据写进 md 里也是会被召回的（2026-09-24 实测）
+            if do_redact:
+                part, hit_labels = redact(part, extra_words=extra_words)
+                if hit_labels:
+                    redacted += 1
             payload_meta = {"timestamp": stamp, "path": path, "source_agent": "knowledge-base",
                             "chunk": i, "chunks": len(parts), "file": os.path.basename(path)}
             try:
@@ -255,4 +264,5 @@ def ingest_docs(cfg, dirs=None, exts=None, since: str | None = None, dry_run: bo
             done += 1
             if progress and done % 100 == 0:
                 progress(done, total_chunks, ok, dup, err)
-    return {"files": len(plan), "chunks": total_chunks, "ok": ok, "dup": dup, "error": err}
+    return {"files": len(plan), "chunks": total_chunks, "ok": ok, "dup": dup, "error": err,
+            "redacted": redacted}

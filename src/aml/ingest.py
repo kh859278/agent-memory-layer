@@ -15,6 +15,38 @@ import time
 from . import text
 from .adapters import build
 from .http import MemoryClient, client_for
+from .redact import redact
+
+
+def redact_records(records, do_redact: bool = True, extra_words=()) -> dict:
+    """入库前脱敏：把记录正文里的凭据盖成 `［已脱敏］`（2026-09-24 补）。
+
+    为什么必须有这一道：会话原文是**用户自己敲进来的**，账号口令、token、
+    内网地址都会跟着进水；而检索会把这些召回进上下文（本机实测命中过
+    MySQL root 口令、公众号 AppSecret、ghp_ 开头的 token）。
+    此前只有两道闸门 —— 蒸馏**发送前**、提交**扫描前** —— 入库这道是缺的，
+    所以"入库 → 召回"这条路径上没有任何过滤。
+
+    只改 `content`，命中的标签去重后记进 `metadata.redacted_labels`，
+    便于事后统计"到底盖了多少"（`backfill`/`sync` 会打出来）。
+    """
+    if not do_redact:
+        return {"redacted": 0, "labels": []}
+    n = 0
+    labels = []
+    for rec in records:
+        clean, hits = redact(rec.get("content") or "", extra_words=extra_words)
+        if not hits:
+            continue
+        n += 1
+        rec["content"] = clean
+        meta = rec.setdefault("metadata", {})
+        meta["redacted"] = True
+        meta["redacted_labels"] = hits
+        for label in hits:
+            if label not in labels:
+                labels.append(label)
+    return {"redacted": n, "labels": labels}
 
 
 def collect(cfg, only_files=None, skip_files=None, since: str | None = None) -> list:
@@ -48,6 +80,11 @@ def collect(cfg, only_files=None, skip_files=None, since: str | None = None) -> 
                                     "metadata": dict(meta, kind="reply",
                                                      tools=sorted(set(turn.tools))[:20]),
                                     "conversation_id": turn.session})
+    # 入库前统一脱敏（`ingest.redact`，默认开）——放在这里，sync 与 watch 两条路径都覆盖到
+    ingest_cfg = cfg.section("ingest")
+    redact_records(records,
+                   do_redact=bool(ingest_cfg.get("redact", True)),
+                   extra_words=ingest_cfg.get("redact_words") or [])
     return records
 
 

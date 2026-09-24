@@ -31,6 +31,23 @@ PATTERNS = [
                                 r"AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b")),
     ("疑似硬编码密钥赋值", re.compile(r"(?i)\b(?:api[_-]?key|secret|password|token)\s*[:=]\s*"
                                       r"[\"'][^\"'\s]{12,}[\"']")),
+    # ---- 2026-09-24 补的两条：老规则只认"英文关键词 + 引号"这一种形态 ----
+    # 起因是本机审计：库内躺着 MySQL root 口令、公众号 AppSecret、ghp_ token，
+    # 而它们大多是"关键词冒号后跟裸值"或中文关键词的写法 —— 老规则一条都抓不到，
+    # 所以"入库 → 召回"这条路上等于没有过滤。
+    #
+    # 两条都**刻意收窄**，因为宽规则会把代码与文档判红（第一版实测 9 处误报，
+    # 全是 `token = str(token)`、`密钥或他人隐私数据`、以及测试里的 f-string 占位）：
+    #   · 值里不许含 `(){}[]` —— 那是代码表达式与 f-string 占位，不是凭据
+    #   · 中文写法要求值**不以汉字开头**，且值里必须出现数字或符号
+    # 代价是"纯汉字口令"抓不到。取舍：宁可漏，也不要把散文和代码盖花。
+    ("疑似凭据赋值(无引号)", re.compile(
+        r"(?i)\b(?:api[_-]?key|apikey|secret|secret[_-]?key|app[_-]?secret|password|passwd|pwd|"
+        r"token|access[_-]?token)\s*[:=]\s*(?![\"'])[^\s\"',;(){}\[\]]{8,}")),
+    ("疑似凭据赋值(中文)", re.compile(
+        r"(?:密码|口令|私钥|密钥|账号密码)\s*(?:是|为|[:：=])?\s*"
+        r"(?![\u4e00-\u9fff])"
+        r"(?=[^\s，。；、）)]*[0-9!@#$%^&*])[^\s，。；、）)]{6,}")),
     ("邮箱", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
     ("手机号", re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")),
 ]
@@ -42,7 +59,10 @@ PATTERNS = [
 #     （2026-09-16 实测：加了这条之前，CI 会被自己的 ROADMAP 判红。）
 ALLOW = re.compile(r"(?:Users[\\/]+<|/home/<|/Users/<|Users[\\/]+USER|example\.com|"
                    r"user@example|OWNER/agent-memory-layer|"
-                   r"[\w.+-]*@users\.noreply\.github\.com|git@github\.com)")
+                   r"[\w.+-]*@users\.noreply\.github\.com|git@github\.com|"
+                   # 已经脱敏过的占位符不能再被当成命中：否则 `密码是 ［已脱敏］`
+                   # 会被中文规则反复命中（幂等性靠这条保证，2026-09-24）
+                   r"［已脱敏］|\[已脱敏\])")
 
 # 脱敏后的占位符。用中文全角括号，避免和 Markdown/JSON 语法打架。
 MASK = "［已脱敏］"
