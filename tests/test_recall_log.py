@@ -102,7 +102,10 @@ def test_render_lists_hashes_and_next_step(tmp_path):
 
 def test_retriever_writes_ledger_with_hashes(tmp_path):
     cfg = make_cfg(tmp_path)
-    hits = [(0.9, memory("h1")), (0.88, memory("h2"))]
+    # 两条正文必须**不同**：2026-09-24 加了"检索时近重复过滤"之后，
+    # 正文一模一样的两条只会注入一条（fixture 原来都传默认 content="一条经验"，
+    # 于是这个测试其实在断言"同一句话注入两次"）。这里只改 fixture，不动断言语义。
+    hits = [(0.9, memory("h1", "第一条经验正文")), (0.88, memory("h2", "第二条完全不同的经验正文"))]
     result = Retriever(cfg, client=FakeClient(hits)).search("随便问问", phase="P2")
     assert result.hashes == ["h1", "h2"]
     events = recall_log.tail(cfg, 1)

@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 
+from .dedup import grams, jaccard
 from .feedback import authority_factor, authority_label, rank_factor, reliability
 from .http import MemoryAPIError, MemoryClient, client_for
 from .migrate import is_procedure
@@ -59,13 +60,21 @@ class Result:
         if d.get("service_down"):
             lines.append("· 记忆服务不可达 —— 不是没有记录，是查不了：先起服务")
             return "\n".join(lines)
-        if d.get("candidates") == 0:
+        if d.get("candidates") == 0 and not d.get("junk_deferred"):
             lines.append("· 语义检索返回 0 条：库可能是空的，或嵌入模型没索引这批数据")
-        else:
+        elif d.get("candidates"):
             lines.append(f"· 语义返回 {d['candidates']} 条，最高分 {d.get('top')}；"
                          f"达到最松阈值(0.65)的有 {d.get('above_loosest', 0)} 条")
         if d.get("fts_hits"):
             lines.append(f"· 关键词(FTS) 命中 {d['fts_hits']} 条但都被标签/预算过滤了 —— 换更具体的名词再试")
+        if d.get("junk_deferred") and d.get("candidates") == 0:
+            # 2026-09-24 修：这一支以前会谎报"库可能是空的" —— 实际语义确实返回了若干条，
+            # 只不过全是会话流水（原始对话），且都没达到最松阈值。
+            lines.append(f"· 语义返回 {d['junk_deferred']} 条，**全是会话流水**（原始对话）——"
+                         f"这类内容噪声大，只在没有知识/项目命中时才会被用")
+        if d.get("dedup_skipped"):
+            lines.append(f"· 另有 {d['dedup_skipped']} 条与已入选的内容近重复被跳过 ——"
+                         f"想让它们也进来：`--n` 放宽，或把 `retrieval.dedup_sim` 设成 0")
         if d.get("procedure_skipped"):
             lines.append(f"· 另有 {d['procedure_skipped']} 条**程序性内容**（技能正文）被默认跳过 ——"
                          f"它们是「照做会改变行为」的指令，只该显式加载；确实要一起看就加 "
@@ -165,7 +174,8 @@ class Retriever:
 
         diag: dict = {"phase": phase, "candidates": 0, "top": None, "tier_used": None,
                       "above_loosest": tiers[-1] if tiers else 0.65, "fts_hits": 0,
-                      "procedure_skipped": 0}
+                      "procedure_skipped": 0, "junk_deferred": 0, "dedup_skipped": 0,
+                      "same_source_skipped": 0}
         if query and not allow_repeat and self.is_repeat(phase, query):
             diag["cooldown_skipped"] = True
             return Result(phase, [], 0, budget, [], diag)
@@ -185,27 +195,43 @@ class Retriever:
             diag["procedure_skipped"] += len(cand) - len(kept)
             cand = kept
 
-        diag["candidates"] = len(cand)
-        diag["top"] = round(cand[0][0], 3) if cand else None
+        # 会话流水（kind:task / kind:reply）是**原始对话**，噪声大：
+        # 注释里一直写着"只作为最后兜底"，但 `JUNK_TAGS` 在本文件之外从来没被使用过 ——
+        # 也就是说这条约束此前只是注释。实测（2026-09-24）：查"powershell 编码 乱码"，
+        # 语义 top-5 里有 3 条是会话流水，"补 BOM""我的新脚本没 BOM" 这种半句话
+        # 会和真正的沉淀条目抢 P2 的 3 个注入位。现在把它真的隔到最后一层。
+        def _is_junk(m):
+            return any(t in (m.get("tags") or []) for t in JUNK_TAGS)
 
-        pool, tier_used = [], None
-        for tier in tiers:
-            hit = [(s, m) for s, m in cand if s >= tier]
-            if hit:
-                pool, tier_used = hit, tier
-                break
-        diag["tier_used"] = tier_used
-        if pool:
+        quality = [(s, m) for s, m in cand if not _is_junk(m)]
+        junk = [(s, m) for s, m in cand if _is_junk(m)]
+        diag["junk_deferred"] = len(junk)
+        cand = quality
+
+        diag["candidates"] = len(cand)
+        top_source = cand or junk
+        diag["top"] = round(top_source[0][0], 3) if top_source else None
+
+        def _tier_pool(items):
+            """级联回退 + 相对边际 + 同档内按"可靠度 × 来源"重排。"""
+            pool, tier_used = [], None
+            for tier in tiers:
+                hit = [(s, m) for s, m in items if s >= tier]
+                if hit:
+                    pool, tier_used = hit, tier
+                    break
+            if not pool:
+                return [], None
             top = pool[0][0]
             pool = [(s, m) for s, m in pool if s >= max(tier_used, top - margin)]
-
-        # 同档位内按"可靠度 × 来源"重排：被用过且有效的排前面，人写的给一点加成，
-        # 没数据的**不惩罚**（系数 1.0）。只在档位内动顺序，不改分数门槛 ——
-        # 否则一条高分新记忆会因"还没被用过"被挤出结果。
-        if pool:
-            pool = sorted(pool, key=lambda item: -(
+            # 只在**档位内**重排：不动分数门槛，所以新记忆不会因为"还没被用过"被挤出去
+            return sorted(pool, key=lambda item: -(
                 item[0] * rank_factor(item[1].get("metadata") or {})
-                * authority_factor(item[1].get("metadata") or {}, item[1].get("tags"))))
+                * authority_factor(item[1].get("metadata") or {}, item[1].get("tags")))), tier_used
+
+        pool, tier_used = _tier_pool(cand)
+        junk_pool, _junk_tier = _tier_pool(junk)
+        diag["tier_used"] = tier_used
 
         # 关键词兜底：语义没命中（或命中太少）时才用，且排在最后
         kw_pool = []
@@ -217,7 +243,7 @@ class Retriever:
                 kw_pool = kept
             diag["fts_hits"] = len(kw_pool)
 
-        if not pool and not kw_pool:
+        if not pool and not kw_pool and not junk_pool:
             return Result(phase, [], 0, budget, [], diag)
 
         prefer = [tag] if tag else []
@@ -229,13 +255,47 @@ class Retriever:
             return t in (m.get("tags") or [])
 
         picked, seen = [], set()
+        # 检索时去重（2026-09-24 加）：
+        #   ① **逐字近重复**：同一句话的措辞变体会吃光阶段预算（P2 只有 3 条 600 字）。
+        #   ② **同源限流**：更常见的是"同一句忠告被同一个会话反复蒸馏成好几句、
+        #      彼此用词完全不同"。实测查"事件驱动 播报 轮询"，top-5 里 5 条全部
+        #      来自 `session-164d2fd6`，而它们两两**逐字相似度最高只有 0.103** ——
+        #      任何词面阈值都抓不到，只有"同源"这个维度认得出来。
+        #      所以同一 `src_session` 在一档内最多占 N 个位；**位子不够时仍会兜底补回**，
+        #      不会因为限流导致"查得到却给不出来"。
+        sim_threshold = float(self.retrieval.get("dedup_sim", 0.85))
+        per_source_max = int(self.retrieval.get("per_source_max", 2) or 0)
+        kept_grams: list = []
+        src_counts: dict = {}
+        deferred_by_source: list = []
 
-        def take(items):
+        def _src_of(m):
+            md = m.get("metadata") or {}
+            return str(md.get("src_session") or md.get("src_session_id") or "")
+
+        def take(items, enforce_source_cap=True):
             for s, m in items:
                 h = m.get("content_hash") or (m.get("content") or "")[:80]
                 if h in seen:
                     continue
+                if sim_threshold > 0:
+                    g = grams(m.get("content") or "")
+                    if any(jaccard(g, kg) >= sim_threshold for kg in kept_grams):
+                        diag["dedup_skipped"] += 1
+                        seen.add(h)          # 记成已见，别在后面几层再评估一遍
+                        continue
+                else:
+                    g = None
+                src = _src_of(m)
+                if enforce_source_cap and per_source_max > 0 and src and src_counts.get(src, 0) >= per_source_max:
+                    diag["same_source_skipped"] += 1
+                    deferred_by_source.append((s, m))
+                    continue
+                if g is not None:
+                    kept_grams.append(g)
                 seen.add(h)
+                if src:
+                    src_counts[src] = src_counts.get(src, 0) + 1
                 picked.append((s, m))
                 if len(picked) >= limit:
                     return True
@@ -254,6 +314,16 @@ class Retriever:
             take(pool)
             take(kw_pool)
             layers.append("全库")
+        # ④ 会话流水兜底 —— 只有前三层都没凑够时才轮到它
+        if len(picked) < limit and junk_pool:
+            before = len(picked)
+            take(junk_pool)
+            if len(picked) > before:
+                layers.append("会话流水")
+        # ⑤ 同源限流的兜底：位子还没满，就把刚才因为"同一个会话"被延后的补回来。
+        #    限流是**软约束** —— 不能让"明明查得到"变成"给不出来"。
+        if len(picked) < limit and deferred_by_source:
+            take(deferred_by_source, enforce_source_cap=False)
 
         lines, hashes, used = [], [], 0
         for s, m in picked:
