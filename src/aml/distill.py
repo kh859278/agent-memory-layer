@@ -292,6 +292,38 @@ def session_key(session_id: str) -> str:
     return s[:8]
 
 
+def write_correction(cfg, subject: str, was: str, now: str, evidence: str = "",
+                     supersedes: str = "", domain: str = "general",
+                     agent: str = "manual", client: MemoryClient | None = None) -> dict:
+    """写一条**更正条**：明确取代某条旧结论。
+
+    约定（借 Hindsight 的 `Correction: <主题>`，但比它更硬）：
+
+      · 标题固定 `更正：<主题>`
+      · 正文写清三件事：原来声称什么 / 现在什么是真的 / 你查了什么
+      · `metadata.supersedes` 写明被取代那条的 content_hash（前缀即可）
+
+    为什么必须显式写 hash：实测「更正条」与「它更正的旧结论」词面 Jaccard 只有 **0.103**，
+    任何相似度阈值都认不出它们是一回事（现有 dedup_sim 是 0.85）。
+    所以"新的压过旧的"只能靠显式链接 —— 见 `retrieval.py` 里对应的那段注释。
+    """
+    domain = domain_of(domain or "general")
+    ktype = "correction"
+    content = (f"【更正：{subject}】原来声称：{was}　现在为真：{now}"
+               + (f"　依据：{evidence}" if evidence else ""))
+    tags = ["kind:knowledge", "reusable:true", f"domain:{domain}", f"ktype:{ktype}",
+            "confidence:high"]
+    metadata = {"title": f"更正：{subject}", "domain": domain, "ktype": ktype,
+                "evidence": evidence, "supersedes": (supersedes or "").strip(),
+                "src": "correction", "src_agent": agent,
+                "review_after": review_after_for(ktype)}
+    client = client or client_for(cfg)
+    res = client.store(content, tags, metadata,
+                       conversation_id=f"correction:{subject[:40]}")
+    return {"ok": bool(res.get("success")), "content": content, "tags": tags,
+            "metadata": metadata, "response": res}
+
+
 def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int:
     """写回记忆层：kind:knowledge + domain + 复核期。"""
     client = client or client_for(cfg)

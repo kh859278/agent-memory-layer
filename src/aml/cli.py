@@ -442,15 +442,25 @@ def _cmd_task_bench(args, cfg):
     if args.ablate:
         print(f"反事实臂：memory ON 之外再跑一组「藏掉前 {args.ablate} 条记忆」，"
               f"用来判断注入的记忆有没有真的被用上（成本相应增加）")
-    print("提示：这一步会真的起 agent 并产生费用；跑完会给出六项指标与增量。", flush=True)
+    print("提示：这一步会真的起 agent 并产生费用；跑完会给出七项指标与增量"
+          "（含验收脚本 `SUMMARY` 里的核心判据通过率）。", flush=True)
     # 逐行 flush：任务级基准一跑就是几分钟，输出被管道缓冲住等于没有进度
     report = taskbench.evaluate(cfg, tasks, arms=arms, agent=agent, fixtures=args.fixtures,
                                keep=args.keep, repeats=max(1, args.repeats),
                                log=None if args.quiet else (lambda m: print(m, flush=True)),
                                feedback=args.feedback, ablate=max(0, int(args.ablate or 0)))
-    print(taskbench.render(report))
+    # **先落盘，再渲染**（2026-09-26 教训）：渲染要拼 `−`（U+2212）等非 ASCII 字符，
+    # 而 Windows 上 Python 的 stdout 可能是 GBK —— 打印抛 UnicodeEncodeError 时，
+    # 如果保存排在后面，几十分钟的真跑数据会连一次保存的机会都没有（实测丢过 $0.71）。
+    saved = None
     if not args.no_save:
-        print(f"报告已存：{taskbench.save_report(cfg, report)}")
+        try:
+            saved = taskbench.save_report(cfg, report)
+        except Exception as e:                                    # noqa: BLE001
+            print(f"报告保存失败：{type(e).__name__}: {e}", file=sys.stderr)
+    print(taskbench.render(report))
+    if saved:
+        print(f"报告已存：{saved}")
     if args.json:
         print(json.dumps({k: v for k, v in report.items() if k != "rows"},
                          ensure_ascii=False, indent=2))

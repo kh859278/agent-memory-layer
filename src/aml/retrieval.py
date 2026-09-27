@@ -174,6 +174,7 @@ class Retriever:
 
         diag: dict = {"phase": phase, "candidates": 0, "top": None, "tier_used": None,
                       "above_loosest": tiers[-1] if tiers else 0.65, "fts_hits": 0,
+                      "superseded_dropped": 0,
                       "procedure_skipped": 0, "junk_deferred": 0, "dedup_skipped": 0,
                       "same_source_skipped": 0}
         if query and not allow_repeat and self.is_repeat(phase, query):
@@ -242,6 +243,38 @@ class Retriever:
                 diag["procedure_skipped"] += len(kw_pool) - len(kept)
                 kw_pool = kept
             diag["fts_hits"] = len(kw_pool)
+
+        # 更正条压过被它取代的旧条（2026-09-26 加）。
+        # 为什么不能靠相似度：实测更正条与它要更正的旧结论，词面 Jaccard 只有 **0.103**
+        # —— 现有 dedup_sim 是 0.85，根本认不出它们是一回事。所以只能靠**显式链接**：
+        # 更正条的 metadata.supersedes 写明它取代哪条。没有这条链接时，新旧两条会一起
+        # 进上下文，模型完全可能照旧结论干活（本机 env-sandbox 那两条就是实例）。
+        def _superseded(items):
+            out = set()
+            for _s, m in items:
+                sup = str((m.get("metadata") or {}).get("supersedes") or "").strip()
+                if sup:
+                    out.add(sup)
+            return out
+
+        def _drop_superseded(items, sup):
+            if not sup:
+                return items, 0
+            kept_items, dropped = [], 0
+            for s, m in items:
+                h = str(m.get("content_hash") or "")
+                if h and any(h == x or h.startswith(x) for x in sup):
+                    dropped += 1
+                    continue
+                kept_items.append((s, m))
+            return kept_items, dropped
+
+        _sup = _superseded(list(pool) + list(kw_pool) + list(junk_pool))
+        if _sup:
+            pool, _d1 = _drop_superseded(pool, _sup)
+            kw_pool, _d2 = _drop_superseded(kw_pool, _sup)
+            junk_pool, _d3 = _drop_superseded(junk_pool, _sup)
+            diag["superseded_dropped"] = _d1 + _d2 + _d3
 
         if not pool and not kw_pool and not junk_pool:
             return Result(phase, [], 0, budget, [], diag)

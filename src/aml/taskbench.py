@@ -54,6 +54,48 @@ SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "no
 HIDDEN_DIR = "_hidden"        # fixture 里"判分时才给"的验收标准（agent 看不到）
 FILE_SCAN_LIMIT = 200_000      # 违禁串扫描时读进内存的正文上限（防止把整个仓库读进来）
 DEFAULT_TIMEOUT = 600
+# 重试时喂回去的验收输出上限：够看清失败原因，又不至于把上下文塞爆
+MAX_FEEDBACK_CHARS = 4000
+
+# 重试时喂回去什么（任务表 `feedback` 字段）：
+#   hidden —— 隐藏验收的完整输出（老行为）。**会泄题**：判分器的话里常点名规则本身。
+#   public —— 只跑工作区里本来就有、agent 自己也能跑的公开检查，喂它的输出。
+#   none   —— 只告诉它"没过"，不给任何外部信息；纯靠自己返工。
+#
+# 为什么要有后两档 —— 2026-09-26 实测（sandbox-tmp，三臂对照）：
+# 三轮那组把判分器的话喂回去之后，OFF 组收尾原话是
+# 「`nomkdtemp` 的根因是**文档字符串本身**」—— 它学会的是"别让这个字符串出现"，
+# 而不是那条经验。喂回去的是判分标准，量到的就是"照抄判分标准"的能力。
+# 结论：**要量"返工能力"，喂回去的信息就不能泄题**；要量"照抄能力"，才用 hidden。
+FEEDBACK_MODES = ("hidden", "public", "none")
+FEEDBACK_DEFAULT = "hidden"
+
+
+def normalize_feedback(value) -> str:
+    """把任务表里的 `feedback` 归一成合法档位。
+
+    写错的档位**回落到 hidden**（老行为），不回落成"不喂" ——
+    "不喂"会把返工能力测成运气，而且没人看得出来是配置写错了。
+    """
+    mode = str(value or FEEDBACK_DEFAULT).strip().lower()
+    return mode if mode in FEEDBACK_MODES else FEEDBACK_DEFAULT
+
+
+# `forbidden` 查哪儿：
+#   probe（默认）—— agent 自述 + 验收输出 + 工作区正文。老行为。
+#   artifacts    —— **只查工作区里交出来的东西**。
+#
+# 为什么要这一档（2026-09-26 实测）：journal 组的 ON 交出了 7/7 全对的一篇，
+# 却在收尾里写了一句「其他｜未写校内指导老师、未附参考资料」——
+# 而 `forbidden` 是子串判据，于是它**声明自己没写**反被判成写了，成功被抹成失败。
+# 这跟"声明自己没写被记成写了"是同一个毛病：判据该查**产物**，不该查 agent 的自述。
+FORBIDDEN_SCOPES = ("probe", "artifacts")
+FORBIDDEN_SCOPE_DEFAULT = "probe"
+
+
+def normalize_forbidden_in(value) -> str:
+    scope = str(value or FORBIDDEN_SCOPE_DEFAULT).strip().lower()
+    return scope if scope in FORBIDDEN_SCOPES else FORBIDDEN_SCOPE_DEFAULT
 
 NO_MEMORY_RULE = (
     "【本次限制】不要使用任何历史记忆、知识库、检索工具或跨会话经验 —— "
@@ -97,10 +139,20 @@ def load_tasks(path: str) -> list:
         task.setdefault("forbidden", [])
         task.setdefault("expect_memory", [])
         task.setdefault("timeout", DEFAULT_TIMEOUT)
+        # 最多跑几次。1 = 只跑一次（老行为）；>1 时验收失败会把输出喂回去重跑
+        task.setdefault("max_rounds", 1)
+        # 重试时**喂回去什么**：见 `feedback_for`。默认 hidden = 老行为。
+        task["feedback"] = normalize_feedback(task.get("feedback"))
+        # 泄题词：喂回去的正文里一旦出现这些词，就说明这一轮等于把答案给了 agent
+        task.setdefault("leak_words", [])
+        # `forbidden` 查哪儿：probe（默认，含 agent 的自述）/ artifacts（只查工作区产物）
+        task["forbidden_in"] = normalize_forbidden_in(task.get("forbidden_in"))
         # 命令统一归一成数组：字符串里带空格的路径不会被 shlex 拆坏
         task["verify"] = _as_cmd(task["verify"])
         if task.get("regression"):
             task["regression"] = _as_cmd(task["regression"])
+        if task.get("public"):
+            task["public"] = _as_cmd(task["public"])
     return tasks
 
 
@@ -185,6 +237,131 @@ def inject_hidden(task: dict, dest: str, fixtures: str | None = None) -> list:
             shutil.copy2(full, target)
             copied.append(rel.replace("\\", "/"))
     return sorted(copied)
+
+
+def _remove_hidden(root: str, rels) -> None:
+    """把判分前拷进去的 `_hidden/` 再撤走。
+
+    为什么必须撤：重试时 agent 在**同一个工作区**里继续干活，
+    隐藏验收留在那儿就等于把答案摊开给它看。
+    sde-bench 把这叫 no answer leakage —— 是重试机制能成立的前提。
+    """
+    for rel in rels or []:
+        path = os.path.join(root, rel)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        parent = os.path.dirname(path)
+        while parent and os.path.abspath(parent) != os.path.abspath(root):
+            try:
+                os.rmdir(parent)
+            except OSError:
+                break
+            parent = os.path.dirname(parent)
+
+
+def parse_summary(output: str) -> dict:
+    """把验收脚本自己打的 `SUMMARY {...}` 抠出来 —— 部分分。
+
+    为什么必须抠：判分器早就在打结构化结果（`core_pass/core_total` 等），
+    但基准一直只记 `rc`（二值）。于是"核心判据过 6/7 还是 0/7"这种**有分辨率的差别
+    全被丢掉**，只剩"过没过"。2026-09-24 那次三组配套实测就是这样被埋掉的：
+    OFF 核心 0/7、2/7、0/7，ON 核心 7/7、6/7、7/7 —— 差 6 项，二值上却只差 1 组。
+
+    约定：SUMMARY 行必须是**最后一个**能解析出 JSON 的 `SUMMARY ` 前缀行；
+    解析不了就返回 {}（老判分器没有 SUMMARY，不能因此让整轮作废）。
+    """
+    found = {}
+    for line in (output or "").splitlines():
+        line = line.strip()
+        if not line.startswith("SUMMARY "):
+            continue
+        try:
+            data = json.loads(line[len("SUMMARY "):])
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            found = data
+    return found
+
+
+def checks_from(verify: dict) -> dict:
+    """从验收输出里取部分分，并补一个 `core_rate`（0–1，方便直接比大小）。"""
+    raw = parse_summary((verify or {}).get("output") or "")
+    out = dict(raw)
+    total = out.get("core_total")
+    if isinstance(total, int) and total > 0:
+        out["core_rate"] = round(int(out.get("core_pass") or 0) / total, 3)
+    elif raw:
+        # 判分器只打了别的结构（比如只有 pass/total）：也算得出比率
+        total = raw.get("total")
+        if isinstance(total, int) and total > 0:
+            out["core_rate"] = round(int(raw.get("pass") or 0) / total, 3)
+    return out
+
+
+def leak_words_hit(task: dict, text: str) -> list:
+    """喂回去的正文里出现了任务声明的泄题词 → 这一轮等于把答案递给了 agent。
+
+    任务表 `leak_words` 就是"判分器一旦说出这个词，题目就作废"的那些词
+    （对 sandbox-tmp 而言是 `0o700`／`chmod`：说了等于告诉它答案）。
+    有了这个守卫，"不泄题"才是个**可核验的**性质，而不是我口头保证的。
+    """
+    return [w for w in (task.get("leak_words") or []) if w and w in (text or "")]
+
+
+def feedback_for(task: dict, verify_output: str, public_output: str | None) -> dict:
+    """按 `feedback` 档位决定重试时喂回去的正文，并顺手查有没有泄题。
+
+    返回 `{mode, source, text, leaks}`：
+      · mode=hidden → 隐藏验收输出（可能泄题，leaks 如实记录）
+      · mode=public → 只看公开检查的输出；若这一轮没跑公开检查，就退化成"只说没过"
+      · mode=none   → 只说没过
+    泄题时**仍然照原样喂**（不改历史行为），但把 `leaks` 记进结果行 ——
+    这样"这次差分可能是抄来的"会被数据自己标出来，而不是靠我记得。
+    """
+    mode = normalize_feedback(task.get("feedback"))
+    if mode == "hidden":
+        text, source = (verify_output or ""), "hidden"
+    elif mode == "public":
+        text, source = (public_output or ""), ("public" if public_output else "none")
+    else:
+        text, source = "", "none"
+    if len(text) > MAX_FEEDBACK_CHARS:
+        text = text[-MAX_FEEDBACK_CHARS:]
+    return {"mode": mode, "source": source, "text": text,
+            "leaks": leak_words_hit(task, text)}
+
+
+def _run_in_copy(cmd, workdir: str, timeout: int = 300) -> dict:
+    """在**工作区副本**里跑公开检查。
+
+    为什么不直接在工作区里跑：公开检查自己会写临时文件/缓存，跑完留在地上，
+    下一轮的 `changed_files` 与正文扫描（forbidden / expect_memory 的 probe）
+    就会把这些噪音算成 agent 的产出。挪到副本里跑，主工作区一行不动。
+    """
+    with tempfile.TemporaryDirectory(prefix="aml-bench-pub-") as tmp:
+        target = os.path.join(tmp, "w")
+        try:
+            shutil.copytree(workdir, target,
+                            ignore=shutil.ignore_patterns(*sorted(SKIP_DIRS)))
+        except OSError as e:
+            return {"cmd": cmd, "rc": 127, "output": f"公开检查跑不起来（复制工作区失败）：{e}",
+                    "skipped": False}
+        return run_check(cmd, target, timeout=timeout)
+
+
+def _retry_prompt(task: dict, memory_block: str, feedback: str, attempt: int) -> str:
+    """重试用的 prompt：原任务 + 上一轮验收输出原文（像评审把失败结果拍回来）。"""
+    head = build_prompt(task, memory_block)
+    tail = (feedback or "").strip()
+    if len(tail) > MAX_FEEDBACK_CHARS:
+        tail = tail[-MAX_FEEDBACK_CHARS:]
+    note = f"【第 {attempt} 轮验收没通过】你上一轮的改动还留在工作区里。"
+    if tail:
+        return f"{head}\n\n{note}下面是验收命令的输出原文，照它修，别整份重写：\n{tail}"
+    return f"{head}\n\n{note}请据此修正，别整份重写。"
 
 
 def build_prompt(task: dict, memory_block: str = "") -> str:
@@ -346,7 +523,10 @@ def grade(task: dict, run: dict, workspace: str, before: dict, after: dict,
     probe = "\n".join([run.get("result_text") or "", verify.get("output") or "", agent_text])
     expects = task.get("expect") or []
     missing = [e for e in expects if e not in probe]
-    forbidden = [f for f in (task.get("forbidden") or []) if f in probe]
+    # `forbidden` 默认查 probe（含 agent 自述），任务可收紧成只查产物 —— 见 normalize_forbidden_in
+    scope = normalize_forbidden_in(task.get("forbidden_in"))
+    forbidden_text = probe if scope == "probe" else agent_text
+    forbidden = [f for f in (task.get("forbidden") or []) if f in forbidden_text]
     memory_used = [m for m in (task.get("expect_memory") or []) if m in probe]
     changed = changed_files(before, after)
     succeeded = verify.get("rc") == 0 and not missing and not forbidden
@@ -356,8 +536,10 @@ def grade(task: dict, run: dict, workspace: str, before: dict, after: dict,
     return {
         "verify_rc": verify.get("rc"), "verify_output": verify.get("output"),
         "missing_expect": missing, "forbidden_hits": forbidden,
+        "forbidden_in": scope,
         "memory_used": memory_used, "changed_files": changed,
         "success": succeeded, "regressed": regressed,
+        "checks": checks_from(verify),
         "baseline_rc": (baseline or {}).get("rc"),
     }
 
@@ -418,17 +600,63 @@ def execute(cfg, task: dict, arm: str, agent: list, fixtures: str | None = None,
                 memory["chars"] = sum(i["chars"] for i in memory["items"])
                 memory["lines"] = len(memory["items"])
                 memory["ablated"] = [i["hash"] for i in dropped]
-        prompt = build_prompt(task, memory["text"] if arm in ("on", "ablate") else "")
-        run = run_agent(agent, prompt, workdir, timeout=int(task.get("timeout", DEFAULT_TIMEOUT)),
-                        env=env)
-        after = snapshot(workdir)
-        # 先取"agent 自己的产出"正文，再注入 _hidden/：否则验收标准自己的正文会污染判分
-        agent_text = _workspace_text(workdir)
-        # 判分前才把 `_hidden/` 放进来：验收标准不在场内，agent 想达标只能靠"记得"或"猜对"
-        hidden = inject_hidden(task, workdir, fixtures)
-        verify = run_check(_as_cmd(task.get("verify")), workdir)
-        row = grade(task, run, workdir, before, after, baseline=baseline, verify=verify,
-                    workspace_text=agent_text)
+        max_rounds = max(1, int(task.get("max_rounds", 1)))
+        memory_block = memory["text"] if arm in ("on", "ablate") else ""
+        prompt = build_prompt(task, memory_block)
+        attempts = []
+        feedback_log = []
+        hidden = []
+        verify = {"cmd": None, "rc": None, "output": "", "skipped": True}
+        row = None
+        last_run = {}
+        for attempt in range(1, max_rounds + 1):
+            if attempt > 1:
+                log(f"    第 {attempt} 轮 · 上一轮验收没过，把输出原文喂回去")
+            run = run_agent(agent, prompt, workdir,
+                            timeout=int(task.get("timeout", DEFAULT_TIMEOUT)), env=env)
+            after = snapshot(workdir)
+            # 先取"agent 自己的产出"正文，再注入 _hidden/：否则验收标准自己的正文会污染判分
+            agent_text = _workspace_text(workdir)
+            # 判分前才把 `_hidden/` 放进来：验收标准不在场内，agent 想达标只能靠"记得"或"猜对"
+            hidden = inject_hidden(task, workdir, fixtures)
+            verify = run_check(_as_cmd(task.get("verify")), workdir)
+            row = grade(task, run, workdir, before, after, baseline=baseline, verify=verify,
+                        workspace_text=agent_text)
+            attempts.append({"attempt": attempt, "success": row["success"],
+                             "verify_rc": row.get("verify_rc"), "ok": run.get("ok"),
+                             "error": run.get("error"), "turns": run.get("turns"),
+                             "wall_ms": run.get("wall_ms"), "duration_ms": run.get("duration_ms"),
+                             "tokens_in": run.get("tokens_in"), "tokens_out": run.get("tokens_out"),
+                             "cache_read": run.get("cache_read"), "cost_usd": run.get("cost_usd")})
+            # 判分完立刻撤走隐藏验收：留着的话，下一轮 agent 就直接看到了验收标准
+            _remove_hidden(workdir, hidden)
+            last_run = run
+            if row["success"]:
+                break
+            if attempt < max_rounds:
+                # 喂回去什么，按任务的 `feedback` 档位定；泄题词如实记进 feedback_log
+                public_output = None
+                mode = normalize_feedback(task.get("feedback"))
+                if mode == "public" and task.get("public"):
+                    public_output = _run_in_copy(
+                        _as_cmd(task["public"]), workdir,
+                        timeout=int(task.get("timeout", DEFAULT_TIMEOUT))).get("output") or ""
+                fb = feedback_for(task, verify.get("output") or "", public_output)
+                feedback_log.append({"attempt": attempt, "mode": fb["mode"],
+                                     "source": fb["source"], "chars": len(fb["text"]),
+                                     "leaks": fb["leaks"]})
+                if fb["leaks"]:
+                    log(f"    ⚠ 第 {attempt} 轮喂回去的正文里有泄题词 {fb['leaks']}"
+                        f" —— 这一轮的重试不算「独立返工」")
+                prompt = _retry_prompt(task, memory_block, fb["text"], attempt)
+
+        # 纠正次数：成功前失败了几次（0 = 一次就对）；始终没成就等于每轮都错
+        corrections = (len(attempts) - 1) if row["success"] else len(attempts)
+
+        def _total(key):
+            vals = [a.get(key) for a in attempts]
+            return None if any(v is None for v in vals) else sum(vals)
+
         row["hidden_files"] = hidden
         # `memory_used` 只在真的注入了记忆的组有意义：OFF 组没有注入，
         # 工作区里出现同名串纯属巧合（第一版没清，OFF 组也报"用了注入的经验"，指标直接失真）
@@ -439,11 +667,20 @@ def execute(cfg, task: dict, arm: str, agent: list, fixtures: str | None = None,
                     "injected_hashes": memory["hashes"], "memory_empty": memory["empty"],
                     "ablated_hashes": memory.get("ablated") or [],
                     "memory_items": memory.get("items") or [],
-                    "workdir": workdir if keep else None})
-        row.update({k: run.get(k) for k in ("ok", "error", "wall_ms", "turns", "duration_ms",
-                                            "tokens_in", "tokens_out", "cache_read", "cost_usd",
-                                            "denials", "stderr")})
-        row["result_text"] = (run.get("result_text") or "")[:2000]
+                    "workdir": workdir if keep else None,
+                    "max_rounds": max_rounds, "attempts": len(attempts),
+                    "corrections": corrections, "attempts_detail": attempts,
+                    "feedback_mode": normalize_feedback(task.get("feedback")),
+                    "forbidden_in": normalize_forbidden_in(task.get("forbidden_in")),
+                    "feedback_log": feedback_log,
+                    "feedback_leaks": sorted({w for f in feedback_log for w in f["leaks"]}),
+                    "checks": row.get("checks") or {}})
+        row.update({k: _total(k) for k in ("wall_ms", "turns", "duration_ms",
+                                           "tokens_in", "tokens_out", "cache_read")})
+        costs = [a.get("cost_usd") for a in attempts]
+        row["cost_usd"] = None if any(c is None for c in costs) else round(sum(costs), 6)
+        row.update({k: last_run.get(k) for k in ("ok", "error", "denials", "stderr")})
+        row["result_text"] = (last_run.get("result_text") or "")[:2000]
         return row
     finally:
         if not keep:
@@ -541,6 +778,12 @@ def _avg(values):
     return round(sum(clean) / len(clean), 1) if clean else None
 
 
+def _avg3(values):
+    """部分分用的均值：保留三位小数（0.667 和 0.714 的差别不该被四舍五入吃掉）。"""
+    clean = [v for v in values if isinstance(v, (int, float))]
+    return round(sum(clean) / len(clean), 3) if clean else None
+
+
 def summarize(rows: list, arms=None) -> dict:
     """按分组汇总六个指标，并给出 ON − OFF 的差值（差值才是结论）。"""
     arms = arms or sorted({r["arm"] for r in rows})
@@ -554,6 +797,17 @@ def summarize(rows: list, arms=None) -> dict:
             "success": sum(1 for r in group if r["success"]),
             "success_rate": round(sum(1 for r in group if r["success"]) / len(group), 3),
             "rework_turns_avg": _avg([r.get("turns") for r in group]),
+            # 核心判据通过率（部分分）：把判分器 SUMMARY 里的 core_pass/core_total 平均。
+            # 为什么单列一项：二值成功率在难任务上会**饱和**——两组都 0，差别看不见；
+            # 而"核心过 0/7 还是 6/7"是有分辨率的（2026-09-24 三组配套实测，差 6 项）。
+            "core_rate_avg": _avg3([(r.get("checks") or {}).get("core_rate") for r in group]),
+            "core_pass_total": sum(int((r.get("checks") or {}).get("core_pass") or 0)
+                                   for r in group),
+            "core_total_total": sum(int((r.get("checks") or {}).get("core_total") or 0)
+                                    for r in group),
+            "feedback_leak_runs": sum(1 for r in group if r.get("feedback_leaks")),
+            # 纠正次数：0 = 一次就对。比"成功/失败"细，才看得出记忆有没有减少返工
+            "corrections_avg": _avg([r.get("corrections") for r in group]),
             "changed_files_avg": _avg([len(r.get("changed_files") or []) for r in group]),
             "wall_ms_avg": _avg([r.get("wall_ms") for r in group]),
             "tokens_avg": _avg([(r.get("tokens_in") or 0) + (r.get("tokens_out") or 0)
@@ -570,9 +824,11 @@ def summarize(rows: list, arms=None) -> dict:
     if "on" in per_arm and "off" in per_arm:
         on, off = per_arm["on"], per_arm["off"]
         delta = {"success_rate": round(on["success_rate"] - off["success_rate"], 3),
+                 "core_rate": _sub3(on.get("core_rate_avg"), off.get("core_rate_avg")),
                  "turns": _sub(on["rework_turns_avg"], off["rework_turns_avg"]),
                  "tokens": _sub(on["tokens_avg"], off["tokens_avg"]),
                  "wall_ms": _sub(on["wall_ms_avg"], off["wall_ms_avg"]),
+                 "corrections": _sub(on.get("corrections_avg"), off.get("corrections_avg")),
                  "forbidden_runs": on["forbidden_runs"] - off["forbidden_runs"],
                  "regressed_runs": on["regressed_runs"] - off["regressed_runs"]}
     ablate_delta = None
@@ -588,6 +844,19 @@ def summarize(rows: list, arms=None) -> dict:
 
 def _sub(a, b):
     return None if a is None or b is None else round(a - b, 1)
+
+
+def _sub3(a, b):
+    """部分分/比率的差值：保留三位小数。
+
+    `_sub` 只留一位小数 —— 用在 0.857 这种比率上会把 6/7 的差距压成 0.9，
+    再小一点就直接抹成 0，等于又走回"看不见差别"的老路。
+    """
+    return None if a is None or b is None else round(a - b, 3)
+
+
+def _sgn3(value):
+    return "?" if value is None else f"{value:+.3f}"
 
 
 def _pct(values: list, points=(50, 95)) -> dict:
@@ -611,24 +880,38 @@ def render(report: dict) -> str:
     """人看的报告：每个分组一行，最后给差值，并把坑写在结尾。"""
     lines = [f"任务级基准（{report['tasks']} 个任务 × {report['runs']} 次运行）",
              f"  agent：{' '.join(report.get('agent') or [])}"]
-    head = (f"  {'分组':<6}{'成功率':>8}{'轮数':>7}{'改动文件':>9}{'耗时':>8}"
-            f"{'token':>8}{'成本$':>9}{'违禁':>6}{'回归':>6}{'注入字':>8}{'P95':>7}")
+    head = (f"  {'分组':<6}{'成功率':>8}{'核心判据':>14}{'纠正':>7}{'轮数':>7}{'改动文件':>9}"
+            f"{'耗时':>8}{'token':>8}{'成本$':>9}{'违禁':>6}{'回归':>6}{'注入字':>8}{'P95':>7}")
     lines.append(head)
     order = [a for a in ("off", "on", "ablate") if a in report["arms"]]
     order += [a for a in sorted(report["arms"]) if a not in order]
     for arm in order:
         a = report["arms"][arm]
         pct = a.get("injected_chars_pct") or {}
-        lines.append(f"  {arm.upper():<6}{a['success_rate']:>7.0%}{_fmt(a['rework_turns_avg']):>7}"
+        core = a.get("core_rate_avg")
+        core_s = "—" if core is None else f"{core:.0%}"
+        if a.get("core_total_total"):
+            core_s += f"({a['core_pass_total']}/{a['core_total_total']})"
+        lines.append(f"  {arm.upper():<6}{a['success_rate']:>7.0%}{core_s:>14}"
+                     f"{_fmt(a.get('corrections_avg')):>7}{_fmt(a['rework_turns_avg']):>7}"
                      f"{_fmt(a['changed_files_avg']):>9}{_fmt(a['wall_ms_avg']):>8}"
                      f"{_fmt(a['tokens_avg']):>8}{a['cost_usd_total']:>9}"
                      f"{a['forbidden_runs']:>6}{a['regressed_runs']:>6}"
                      f"{_fmt(a['injected_chars_avg']):>8}{_fmt(pct.get('p95')):>7}")
     d = report.get("delta")
     if d:
-        lines.append(f"  差值(ON−OFF)：成功率 {d['success_rate']:+.0%}｜轮数 {_sgn(d['turns'])}｜"
+        lines.append(f"  差值(ON−OFF)：成功率 {d['success_rate']:+.0%}｜"
+                     f"核心判据 {_sgn3(d.get('core_rate'))}｜"
+                     f"纠正 {_sgn(d.get('corrections'))}｜轮数 {_sgn(d['turns'])}｜"
                      f"token {_sgn(d['tokens'])}｜耗时 {_sgn(d['wall_ms'])}ms｜"
                      f"违禁 {d['forbidden_runs']:+d}｜回归 {d['regressed_runs']:+d}")
+        if d.get("core_rate") is not None and abs(d["core_rate"]) >= 0.5:
+            lines.append("  ↑ 核心判据差值 ≥0.5：二值成功率可能已经饱和，"
+                         "**以核心判据为准**（这才是那个有分辨率的指标）")
+    leaks = {a: v.get("feedback_leak_runs", 0) for a, v in report["arms"].items()}
+    if any(leaks.values()):
+        lines.append(f"  ⚠ 重试喂回去的正文里有泄题词的运行：{leaks}"
+                     " —— 这些运行的「纠正次数」不能当作独立返工能力")
     ad = report.get("ablate_delta")
     if ad:
         lines.append(f"  反事实（藏掉前 N 条 − 完整注入）：成功率 {ad['success_rate']:+.0%}｜"
