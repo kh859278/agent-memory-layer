@@ -116,3 +116,121 @@ def test_dsh_adapter_parses_when_zstandard_available(tmp_path):
     assert turns[0].session == "abc"
     assert turns[0].project == "proj-b"
     assert turns[0].tools == ["write"]
+
+
+# ------------------------------------------------------------------- Codex CLI
+
+def test_codex_turn_extraction_and_env_skipped(tmp_path):
+    rows = [
+        {"timestamp": "2026-09-27T04:32:19Z", "type": "session_meta",
+         "payload": {"session_id": "sess-codex-1", "cwd": r"C:\work\proj-c"}},
+        # 环境上下文不是用户说的话
+        {"timestamp": "2026-09-27T04:32:20Z", "type": "response_item",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "<environment_context>x</environment_context>"}]}},
+        {"timestamp": "2026-09-27T04:32:21Z", "type": "response_item",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "这个报错怎么修"}]}},
+        {"timestamp": "2026-09-27T04:32:22Z", "type": "response_item",
+         "payload": {"type": "message", "role": "assistant",
+                     "content": [{"type": "output_text", "text": "先看栈顶。"}]}},
+    ]
+    path = write_jsonl(str(tmp_path / "sessions" / "2026" / "09" / "27"
+                           / "rollout-2026-09-27T04-32-19-sess-codex-1.jsonl"), rows)
+    from aml.adapters.codex import CodexAdapter
+    adapter = CodexAdapter({"enabled": True, "sessions_dir": str(tmp_path / "sessions")}, {})
+    turns = list(adapter.turns(path))
+
+    assert len(turns) == 1
+    assert turns[0].agent == "codex"
+    assert turns[0].session == "sess-codex-1"       # 取自 session_meta
+    assert turns[0].project == "proj-c"
+    assert turns[0].ts == "2026-09-27T04:32:21Z"
+    assert "报错" in turns[0].user
+    assert turns[0].reply == "先看栈顶。"
+    assert len(adapter.discover()) == 1
+
+
+# ------------------------------------------------------------------- Qwen Code
+
+def test_qwen_turn_extraction(tmp_path):
+    rows = [
+        {"uuid": "u1", "sessionId": "sess-qwen-1", "timestamp": "2026-09-27T04:37:42.702Z",
+         "type": "user", "cwd": r"C:\work\proj-q",
+         "message": {"role": "user", "parts": [{"text": "解释一下这个索引"}]}},
+        {"uuid": "u2", "sessionId": "sess-qwen-1", "timestamp": "2026-09-27T04:37:44.543Z",
+         "type": "assistant", "cwd": r"C:\work\proj-q",
+         "message": {"role": "model", "parts": [{"text": "它是路由层。"},
+                                                 {"functionCall": {"name": "read_file"}}]}},
+    ]
+    path = write_jsonl(str(tmp_path / "projects" / "slug" / "chats" / "sess-qwen-1.jsonl"), rows)
+    from aml.adapters.qwen import QwenAdapter
+    adapter = QwenAdapter({"enabled": True, "projects_dir": str(tmp_path / "projects")}, {})
+    turns = list(adapter.turns(path))
+
+    assert len(turns) == 1
+    assert turns[0].agent == "qwen-code"
+    assert turns[0].project == "proj-q"
+    assert turns[0].reply == "它是路由层。"
+    assert turns[0].tools == ["read_file"]
+
+
+# ------------------------------------------------------------------- WorkBuddy
+
+def test_workbuddy_ms_timestamp_and_content_parts(tmp_path):
+    rows = [
+        {"id": "m1", "timestamp": 1790486878475, "type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "帮我写周记"}],
+         "sessionId": "sess-wb-1", "cwd": r"C:\work\proj-w"},
+        {"timestamp": 1790486878496, "type": "file-history-snapshot"},   # 非 message 行要跳过
+        {"id": "m2", "timestamp": 1790486878744, "type": "message", "role": "assistant",
+         "content": [{"type": "output_text", "text": "按上周的格式来。"}]},
+    ]
+    path = write_jsonl(str(tmp_path / "projects" / "slug" / "sess-wb-1.jsonl"), rows)
+    from aml.adapters.codebuddy import WorkBuddyAdapter
+    adapter = WorkBuddyAdapter({"enabled": True, "projects_dir": str(tmp_path / "projects")}, {})
+    turns = list(adapter.turns(path))
+
+    assert len(turns) == 1
+    assert turns[0].agent == "workbuddy"
+    assert turns[0].session == "sess-wb-1"
+    assert turns[0].reply == "按上周的格式来。"
+    # 毫秒整数必须被转成 ISO
+    assert turns[0].ts.startswith("2026-") and turns[0].ts.endswith("Z")
+
+
+# -------------------------------------------------------------------- OpenCode
+
+def test_opencode_reads_sqlite(tmp_path):
+    import sqlite3
+    db = tmp_path / "opencode.db"
+    con = sqlite3.connect(db)
+    con.executescript(
+        "create table session(id text, directory text, time_created integer);"
+        "create table message(id text, session_id text, time_created integer, data text);"
+        "create table part(id text, message_id text, session_id text,"
+        " time_created integer, data text);")
+    con.execute("insert into session values (?,?,?)", ("sess-oc-1", r"C:\work\proj-o", 1790483517895))
+    con.execute("insert into message values (?,?,?,?)",
+                ("m1", "sess-oc-1", 1790483518107, json.dumps({"role": "user"})))
+    con.execute("insert into message values (?,?,?,?)",
+                ("m2", "sess-oc-1", 1790483519022, json.dumps({"role": "assistant"})))
+    con.execute("insert into part values (?,?,?,?,?)",
+                ("p1", "m1", "sess-oc-1", 1, json.dumps({"type": "text", "text": "会话存在哪里"})))
+    con.execute("insert into part values (?,?,?,?,?)",
+                ("p2", "m2", "sess-oc-1", 2, json.dumps({"type": "text", "text": "存在 sqlite 里。"})))
+    con.commit()
+    con.close()
+
+    from aml.adapters.opencode import OpenCodeAdapter
+    adapter = OpenCodeAdapter({"enabled": True, "db_path": str(db)}, {})
+    assert adapter.discover() == [str(db)]
+    turns = list(adapter.turns(str(db)))
+
+    assert len(turns) == 1
+    assert turns[0].agent == "opencode"
+    assert turns[0].session == "sess-oc-1"
+    assert turns[0].project == "proj-o"
+    assert turns[0].user == "会话存在哪里"
+    assert turns[0].reply == "存在 sqlite 里。"
+
