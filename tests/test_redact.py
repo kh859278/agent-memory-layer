@@ -51,6 +51,37 @@ def test_id_number_is_masked():
     assert redact.find_hits("订单号 110101199013070001") == []
 
 
+def test_secret_without_separator_is_masked():
+    """2026-09-28 加：`对话记录/` 复核时实测的残留形态 `AppSecret <32位hex>`
+    —— 关键词与值之间**只有空格、没有冒号/等号**，上一版规则要求 `[:=]`，于是真实凭据被判"0 命中"。
+
+    同时钉死反例：**裸的** 32 位 hex 不许命中 —— 实测同一批 4 处里 3 处是
+    `.mp4` 文件名与 `bundled-skills` 版本目录哈希，宽规则会把它们全盖掉。
+    """
+    fake = "d78d" + "0" * 24 + "1f14"          # 32 位 hex，运行时拼（字面量会让扫描器判红本文件）
+    out, labels = redact.redact(f"**U21:** AppSecret {fake}")
+    assert fake not in out
+    assert "疑似凭据(关键词+空格+32位hex)" in labels
+
+    noise = "2e03663875c52b2169b0af3c86234bdb.mp4"
+    assert redact.find_hits(noise) == []
+    assert redact.find_hits("bundled-skills 目录 3ba4" + "f" * 24 + "95") == []
+
+
+def test_unified_social_credit_code_is_masked():
+    """2026-09-28 加：营业执照 OCR 文本里的统一社会信用代码（`对话记录/` 实测 2 处）。"""
+    code = "91330101" + "MA2ABCDE" + "6K"      # 18 位，字符集符合信用代码（不含 I/O/S/U/V/W/X/Z）
+    out, labels = redact.redact(f"营业执照 统一社会信用代码 {code}")
+    assert code not in out
+    assert "统一社会信用代码" in labels
+    # 反向顺序（码在前、标签在后）也要认：营业执照 OCR 实测就是这个顺序
+    out2, labels2 = redact.redact(f"营业执照 (副本) {code} (1/1统一社会信用代码 某门市部")
+    assert code not in out2
+    assert "统一社会信用代码" in labels2
+    # 没有关键词锚定的 18 位串不判（否则订单号/哈希会被误伤）
+    assert redact.find_hits(f"编号 {code}") == []
+
+
 def test_placeholders_are_not_hits():
     """文档里的占位符是**设计上公开**的写法，不能判红（否则 CI 会被自己的文档拦住）。"""
     for line in (r"改成 C:\Users\<you>\... 或 C:\Users\<名>",
