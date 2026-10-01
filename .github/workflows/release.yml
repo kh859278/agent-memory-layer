@@ -31,8 +31,8 @@ jobs:
       id-token: write        # OIDC 换取一次性上传凭据，这是唯一的写权限
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: 构建前先跑一遍守门（发布不该绕过测试与泄漏扫描）
