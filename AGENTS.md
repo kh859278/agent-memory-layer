@@ -20,6 +20,22 @@
 | **5. 远端有新提交 → 先 `git pull --rebase`** | 守门器会拒绝"落后/分叉"状态下的提交，别强推 |
 | **6. 只有主控会话提交** | 其他会话：改完文件 + 写交接单，把提交留给主控；需要立刻提交时先和主控打招呼 |
 
+## 二·五、jj（Jujutsu）日常规则（2026-10-21 起）
+
+本仓库已初始化 **colocated jj**（`.jj/` 与 `.git/` 并存，`.jj` 不进 git）。日常读写用 jj，git 只做只读查询。
+
+| 规则 | 说明 |
+|---|---|
+| **提交/推送仍走守门器** | `python tools/repo_guard.py ...` 自动识别 `.jj` 走 jj 模式：快照 → 校验改动集 ⊆ `--paths` → CRLF 归整 → 测试 → `jj commit` → `main` 书签前移 → `jj git push --bookmark main` |
+| **禁止 git 变更命令** | `git add/commit/checkout/reset/merge/rebase/stash/push` 一律不要用；`git status/log/diff` 等只读可以。混用会产生 divergent change |
+| **禁止交互式命令** | `jj split`/`jj squash` 必须带 filesets 或 `--from/--into`；`jj resolve`、会开编辑器的命令默认禁用；提交消息一律 `-m`；所有 jj 命令带 `--no-pager --color=never` |
+| **禁止 jj workspace** | `jj workspace add/update-stale` 暂不启用（已知 `update-stale` 会丢工作区改动，issue #7229）；需要多工作区走 git worktree（另行评估） |
+| **行尾** | jj 不读 `.gitattributes`；守门器的 `tools/eol_guard.py` 会把文本文件 CRLF 归整成 LF。不要提交 CRLF 文本（本机 Git 系统配置是 `core.autocrlf=true`） |
+| **无网络** | SSH 可能不可达：用 `--no-push` 先提交；恢复后 `jj git push --bookmark main`（书签已由守门器前移） |
+| **手动速查** | `jj st` / `jj diff` / `jj log` / `jj undo` / `jj op log` / `jj restore <path>`；搞砸了先 `jj op log`，再 `jj op restore <op>` |
+
+> 背景与完整手册见工作区 `jj-workflow\README.md`（不进本仓库）。
+
 ## 三、状态与配置的唯一来源（别再各自造一套）
 
 | 东西 | 唯一位置 | 备注 |
