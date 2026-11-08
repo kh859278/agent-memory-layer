@@ -19,6 +19,7 @@
 | **4. 发现别人的未提交改动 → 写交接单** | `python tools/repo_guard.py --handoff "改了什么" --paths a.py b.py`；主控会话提交前会读 `state/handoff/` |
 | **5. 远端有新提交 → 先 `git pull --rebase`** | 守门器会拒绝"落后/分叉"状态下的提交，别强推 |
 | **6. 只有主控会话提交** | 其他会话：改完文件 + 写交接单，把提交留给主控；需要立刻提交时先和主控打招呼 |
+| **7. 单文件 >20KB 拒绝提交** | 提交前 `tools/size_guard.py` 自动拦（≈5,000 token，按字节/4；lockfile、构建产物、二进制、生成文件跳过）；基线（`main`）上已超标的存量文件只警告、不拦，拆完为止 |
 
 ## 二·五、jj（Jujutsu）日常规则（2026-10-21 起）
 
@@ -66,6 +67,7 @@ git 里查不到、当时也没有任何告警。所以：
 pytest -q                       # 190+ 个测试；改代码前请再用 3.9 跑一遍（见 README 开发章节）
 ruff check src tests tools
 python tools/scrub_check.py     # 内容泄漏扫描：绝对路径/凭据/邮箱/屏蔽词
+python tools/size_guard.py --all-tracked   # 体积盘点（只读）：列全仓 >20KB 的存量文件
 python tools/repo_guard.py --status
 ```
 

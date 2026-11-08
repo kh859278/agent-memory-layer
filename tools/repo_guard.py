@@ -38,6 +38,10 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import guard_checks  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK = os.path.join(ROOT, ".git", "repo_guard.lock")
 HANDOFF_DIR = os.path.join(ROOT, "state", "handoff")
@@ -263,6 +267,7 @@ def status() -> int:
         print(f"工作区改动：{len(dirty)} 项")
         for line in dirty[:20]:
             print(f"    {line}")
+    guard_checks.print_size_audit(ROOT)
     _print_handoffs()
     return 0
 
@@ -310,6 +315,10 @@ def submit_git(args, message: str) -> int:
         return 7
     print(f"  暂存：{len(staged)} 个文件 —— {', '.join(staged[:6])}"
           + (" …" if len(staged) > 6 else ""))
+
+    if not guard_checks.run_size_guard(staged, ROOT):
+        print("  [x] 体积门禁未通过，已中止（改动仍在暂存区，拆分后再跑一次）")
+        return 14
 
     if not run_checks(skip_tests=args.skip_tests):
         print("  [x] 守门未通过，已中止（改动仍在暂存区，修完再跑一次）")
@@ -388,6 +397,10 @@ def submit_jj(args, message: str) -> int:
         return 7
     print(f"  变更：{len(changed_after)} 个文件 —— {', '.join(changed_after[:6])}"
           + (" …" if len(changed_after) > 6 else ""))
+
+    if not guard_checks.run_size_guard(changed_after, ROOT):
+        print("  [x] 体积门禁未通过，已中止（改动仍在工作副本里，拆分后再跑一次）")
+        return 14
 
     if not run_checks(skip_tests=args.skip_tests):
         print("  [x] 守门未通过，已中止（改动仍在工作副本里，修完再跑一次）")
