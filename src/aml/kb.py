@@ -151,7 +151,7 @@ def build_index(cfg, memories=None) -> dict:
     for dom in sorted(domains, key=lambda d: -len(domains[d])):
         add(f"### {dom}（{len(domains[dom])} 条）")
         add("")
-        add(f"文件：`沉淀/{dom}.md`")
+        add(f"文件：`沉淀/{dom}*.md`（大领域按类型拆分）")
         add("")
         for title in domains[dom]:
             add(f"- {title}")
