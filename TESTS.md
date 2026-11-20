@@ -22,6 +22,7 @@
 | 13 | 补料后检索复测 | 同 #8，报告 `state/bench/after-distill-20261120.json` | query：命中 20/20、P@3 0.583、R@3 0.90；alt：19/20、P@3 0.517、R@3 1.0 → **补料没提升前 3 条纯度**（精度问题在排序/截断，不在知识量） |
 | 14 | 索引离线重建 | `aml index rebuild --offline` + `pytest tests/test_index_offline.py` | 离线 **1.4s**（API 分页实测 224–600s+，还卡过一次）；输出 31 领域、21,962 条 |
 | 15 | 空 adapter 不再刷告警 | `aml doctor` | 18 项 **❌0 ⚠️0**（未在 config 里配置的 codex/qwen/workbuddy/opencode 记为"未使用（跳过）"） |
+| 16 | 自动链：归档 → 入队 → 定时蒸馏 | 计划任务「记忆层-蒸馏队列」→ `drain-distill.ps1` → `aml distill`；冒烟实跑一次 | 1 个会话（7e960d3b）→ **7 条知识 / 4,109 tokens / 0 失败**；队列 pending 0 / done 598；watch 新入队 `min_tasks` 默认 3（薄会话不自动蒸） |
 
 ## 基线文件与用法
 

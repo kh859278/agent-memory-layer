@@ -124,7 +124,7 @@ def cycle(cfg, state: WatchState, stable: int, distill_sink=None, dry_run: bool 
         rule = should_distill(path)
         if rule.get("distill") and distill_sink:
             distill_sink({"session_id": rule["session_id"], "agent": rule.get("agent"),
-                          "reason": "会话已关闭", "min_tasks": rule.get("min_tasks", 0)})
+                          "reason": "会话已关闭", "min_tasks": rule.get("min_tasks", 3)})
             summary["queued"].append(rule["session_id"].replace("session-", "")[:8])
 
     # 记录签名：只记"已经入库过"或"已冷却"的，没冷却的留到下一轮
