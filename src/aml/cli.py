@@ -137,9 +137,13 @@ def cmd_search(args):
 def cmd_index(args):
     cfg = _cfg(args)
     if args.action == "rebuild":
-        from .kb import build_index
-        info = build_index(cfg)
-        print(f"索引已重建：{info['path']}")
+        from .kb import build_index, memories_from_db
+        if getattr(args, "offline", False):
+            # 服务忙时 /api/memories 分页会卡到小时级（2026-11-20 实测），直读库兜底
+            info = build_index(cfg, memories=memories_from_db(cfg))
+        else:
+            info = build_index(cfg)
+        print(f"索引已重建{'（离线直读）' if getattr(args, 'offline', False) else ''}：{info['path']}")
         print(f"  记忆 {info['memories']} 条 ｜ 沉淀 {info['knowledge']} 条 / {info['domains']} 领域 ｜ "
               f"知识库目录 {info['dirs']} 个")
         return 0
@@ -630,6 +634,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("index", help="知识库索引：show / rebuild")
     sp.add_argument("action", choices=["show", "rebuild"], nargs="?", default="show")
+    sp.add_argument("--offline", action="store_true",
+                    help="rebuild 时直读 SQLite（服务忙/分页卡住时用，快得多）")
     sp.set_defaults(func=cmd_index)
 
     sp = sub.add_parser("backup", help="备份数据库与状态文件（在线备份，按天保留）")

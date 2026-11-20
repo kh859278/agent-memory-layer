@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import collections
 import datetime as dt
+import json
 import os
 import re
 import shutil
+import sqlite3
 
 from .http import client_for
 from .redact import redact
@@ -80,6 +82,43 @@ def fetch_memories(cfg) -> list:
         if not data.get("has_more"):
             break
         page += 1
+    return out
+
+
+def memories_from_db(cfg) -> list:
+    """直读 SQLite 取有效记忆（离线重建索引用）。
+
+    为什么需要（2026-11-20 实测）：服务忙时 `/api/memories` 单页 >20 秒，
+    2.2 万条要翻 220 页，`aml index rebuild` 卡了一小时；直读库几十秒。
+    字段口径与 API 返回对齐：tags 统一成 list，metadata 统一成 dict。
+    """
+    db = str(cfg.get("db_path") or "")
+    if not db or not os.path.isfile(db):
+        raise FileNotFoundError(f"找不到数据库：{db or '(未配置 db_path)'}")
+    con = sqlite3.connect(db, timeout=30)
+    try:
+        rows = con.execute(
+            "SELECT content, tags, metadata, created_at_iso FROM memories "
+            "WHERE deleted_at IS NULL").fetchall()
+    finally:
+        con.close()
+    out = []
+    for content, tags, meta, iso in rows:
+        raw_tags = (tags or "").strip()
+        if raw_tags.startswith("["):
+            try:
+                tag_list = json.loads(raw_tags)
+            except ValueError:
+                tag_list = [x.strip() for x in raw_tags.split(",") if x.strip()]
+        else:
+            tag_list = [x.strip() for x in raw_tags.split(",") if x.strip()]
+        try:
+            meta_dict = json.loads(meta or "{}")
+        except ValueError:
+            meta_dict = {}
+        out.append({"content": content or "", "tags": tag_list,
+                    "metadata": meta_dict if isinstance(meta_dict, dict) else {},
+                    "created_at_iso": iso})
     return out
 
 

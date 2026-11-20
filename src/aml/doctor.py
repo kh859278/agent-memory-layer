@@ -93,12 +93,18 @@ def run(cfg) -> list:
                             "python -m aml index rebuild"))
 
     # 4. 适配器能不能看到会话
+    # 没在 config 里显式配置的适配器（codex/qwen/workbuddy/opencode…）本机根本没装，
+    # 报 0 个会话只会制造 4 条长期噪声 —— 显式配置过的才在 0 文件时告警。
+    adapter_cfg = cfg.section("adapters") or {}
     for adapter in build(cfg):
         try:
             files = adapter.discover()
-            status = OK if files else WARN
-            detail = f"{len(files)} 个会话文件"
-            fix = "" if files else "确认该 agent 装过/用过；或改 config.yaml 里这个 adapter 的路径"
+            if files:
+                status, detail, fix = OK, f"{len(files)} 个会话文件", ""
+            elif adapter.name in adapter_cfg:
+                status, detail, fix = WARN, "0 个会话文件", "确认该 agent 装过/用过；或改 config.yaml 里这个 adapter 的路径"
+            else:
+                status, detail, fix = OK, "未配置/未使用（跳过）", ""
         except Exception as e:  # noqa: BLE001
             status, detail, fix = WARN, f"扫描失败：{type(e).__name__} {e}", "检查路径配置"
         checks.append(Check(f"适配器 {adapter.name}", status, detail, fix))

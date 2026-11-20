@@ -173,7 +173,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml distill` | 会话 → 跨项目知识（`--list` / `--session` / `--rebuild-md`） |
 | `aml search Q --phase P2` | 分阶段检索：级联回退 + 未命中解释（`--explain` 看诊断；`--include-procedure` 才返回技能正文；`--trace` 逐条附 hash 前 8 位，供回答里写引用） |
 | `aml ingest-kb` | 知识库文档分块灌库（`--since` 增量） |
-| `aml index rebuild` | 重建知识库索引（索引会腐化，`doctor` 会告警） |
+| `aml index rebuild` | 重建知识库索引（索引会腐化，`doctor` 会告警）；`--offline` 直读 SQLite——服务忙时 API 分页会慢到小时级，离线只要 1–2 秒 |
 | `aml backup` / `aml restore` | 在线备份（按天保留）/ **从备份恢复**（默认预检，`--yes` 才写，且先自动另存现有库） |
 | `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
 | `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延，`--verify <hash>` 人工确认仍成立 |
