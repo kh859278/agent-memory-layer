@@ -184,7 +184,7 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml bench --tasks FILE` | 检索基准：memory ON/OFF 对照（入口命中率 + 平均注入字数 + **P50/P95/max**）。`--forms query,alt` 同任务换问法对照（暴露"拿知识标题当查询"的自我泄漏），并给出 **P@3 / R@3**（前 3 条里真正相关的比例） |
 | `aml bench --task-level` | **任务级基准**：真起 agent 跑同一批任务两遍（有记忆/无记忆），判成败并统计成功率、返工、耗时、token、被记忆带偏率、既有功能回退率（`--feedback` 顺手回写反馈；`--ablate 1` 加一组"藏掉前 N 条记忆"的**反事实臂**，回答"注入的记忆到底有没有被用上"；有回退/违禁则退出码非 0，可当门禁） |
 | `aml denoise` | 找出噪声并**分类**（`boilerplate` harness 样板 / `ui_echo` 界面回显 / `confirm` 纯确认语 / `short` 过短），`--apply` **软删除**（写 `deleted_at`，可回滚）。2026-11-20 本机实测：样板占 25.7%，清掉后 P1 的 1,500 字预算不再被系统提示吃满 |
-| `aml dedup` | 近义知识合并（默认只预览；`--apply` 才合并，**整簇快照可 `--rollback`**） |
+| `aml dedup` | 近义知识合并（默认只预览；`--sim` 正文阈值 / `--title-sim` 标题阈值可调，`--apply` 才合并，整簇快照可 `--rollback`；合并出的条目也走领域词表） |
 | `aml backfill-embeddings` | 补齐**缺向量**的记录（缺向量 = 语义检索永远搜不到），`--prune-orphans` 清重复孤儿 |
 | `aml mcp` | 起 MCP server（stdio JSON-RPC），把检索/写回/播报/体检暴露给任何 MCP 客户端 |
 | `aml patrol run` | 技能治理一轮：纳管 → 更新 → 镜像入库 → 包版本 → 写播报队列 |
@@ -284,6 +284,26 @@ decision 730 天——技术结论会过期，`aml review` 到点提醒你复核
 **3. 检索必须能解释自己为什么空。** 只走"语义 + 硬阈值"最常见的故障是 **false empty**：
 库里明明有，泛词查询却返回 0 条，调用方就误判成"没有历史约定"。所以：
 级联回退（`0.80 → 0.72 → 0.65 → FTS5 关键词 → LIKE`）+ 未命中时打印分数分布 + 给出换招建议。
+
+## 采集质量与领域词表（2026-11-20）
+
+补了 162 个会话 / 1,047 条知识之后暴露的两个问题，现在都有对应机制：
+
+**只记该记的。** 实测库里 25.7% 是 harness 自己注入的样板（`Time sampled…`、`<system-reminder>`、
+日程提醒、子 agent 通知）。采集口用 `text.is_boilerplate` 按**开头**判（正文里讨论这些字样不误伤），
+存量用 `aml denoise --apply` 按四类软删（`boilerplate` / `ui_echo` / `confirm` / `short`，可回滚）。
+关键词兜底（FTS/LIKE）也补了 `deleted_at IS NULL` —— 语义侧会过滤，它以前不会。
+
+**住哪要收敛。** 模型自由起 `domain` 的结果是 823 个领域 / 805 个文件（390 篇 <600B）。
+`taxonomy.py` 把它收敛到 **31 个**封闭领域（别名 → 关键词 → 前缀三层映射，剥掉
+`checklist/env-setup` 这类类型前缀，兜底 `misc`）；沉淀文件重建为 39 个，大领域按 `ktype`
+拆开（`split_at_chars`，默认 80KB）。索引里的领域数与文件对齐。
+
+**引用能追。** `aml search --trace` 给每条附 hash 前 8 位；`aml why <hash>` 显示
+来源 / 时间 / 领域 / 项目 / 复核期 / 是否被取代 / 被召回次数 —— `aml feedback` 才有可打点的对象。
+
+**索引要快、且不被旧脚本覆盖。** `aml index rebuild --offline` 直读 SQLite：2.2 万条 **1.4 秒**
+（API 分页实测 224–600 秒，还卡过一小时）。本机 `sync.ps1` 收尾已改用它。
 
 ## 技能治理：`aml patrol`
 
@@ -408,6 +428,7 @@ src/aml/
 ├─ config.py        配置解析（AML_HOME / config.yaml / 环境变量 / 命令行，四级覆盖）
 ├─ http.py          记忆服务客户端（重试、超时）
 ├─ text.py          截断 / 降噪判定 / 项目名归一 / 时间戳归一
+├─ taxonomy.py      领域封闭词表（31 个；旧 domain 三层映射）
 ├─ adapters/        agent 会话格式适配器：dsh / claude_code / kimi（新增 agent 只加一个模块）
 ├─ ingest.py        会话 → 记忆层（去重、降噪、时间戳回填）
 ├─ watch.py         常驻监听：归档触发 / 文件静默触发

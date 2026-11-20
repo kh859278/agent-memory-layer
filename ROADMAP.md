@@ -219,6 +219,24 @@
       待依赖解耦后搬迁）
 - [ ] 跨 agent 时间轴的"如何新增 adapter"文档（最容易吸引贡献者的接口）
 
+## Step 5 采集质量与领域词表（2026-11-20）
+
+> 起因：补齐 2026-09-27 → 11-20 的 162 个会话后，暴露"入口脏"和"住得散"两个问题。
+
+- [x] **采集去样板**：`text.is_boilerplate`（只认开头）挡掉 harness 样板；存量
+      `aml denoise --apply` 分类软删 8,707 条（boilerplate / ui_echo / confirm / short）
+- [x] **软删对关键词兜底生效**：FTS/LIKE 补 `deleted_at IS NULL`（语义侧原本就会过滤）
+- [x] **领域词表**：`taxonomy.py` 31 个封闭领域（别名/关键词/前缀 + 类型前缀剥离）；
+      沉淀 805 → 39 个文件，大领域按 ktype 拆；索引、文件、新写入同口径
+- [x] **可解释**：`aml why <hash>` + `aml search --trace`（来源/复核期/召回次数可追）
+- [x] **去重参数化**：`--sim` / `--title-sim`；本轮 79 簇合并，整簇快照可回滚
+- [x] **索引离线重建**：`aml index rebuild --offline`（2.2 万条 1.4 秒）
+- [x] **doctor 口径**：未配置 adapter 记"未使用"；向量覆盖改用有效行做分母
+- [x] **蒸馏队列 bug**：`--session` 过滤不再清空其它待蒸（曾一次删 596 条，已从备份恢复）
+- [x] **自动链接通**：`watch` 入队（薄会话 `min_tasks=3`）→ 计划任务 `drain-distill.ps1` → `aml distill`
+- [ ] **公开基准**：LongMemEval / HaluMem 未接（要先灌它们的 haystack）
+- [ ] **检索精度**：P@3 0.583 / 0.517；同文件限流 + 截断策略未改（下一步）
+
 ## 发布前 checklist
 
 - [x] `pyproject.toml` 占位符换成真实 GitHub 用户名（kh859278）；仓库名与许可（MIT）已定
