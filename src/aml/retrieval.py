@@ -42,9 +42,18 @@ class Result:
     def empty(self) -> bool:
         return not self.lines
 
-    def render(self) -> str:
+    def render(self, trace: bool = False) -> str:
         head = f"# 阶段检索 {self.phase}（{len(self.lines)} 条 / {self.used}/{self.budget} 字）"
-        body = "\n".join(self.lines) if self.lines else self._why_empty()
+        if trace and self.lines:
+            # 逐条附 content_hash 前 8 位：回答里要写"引用哪几条"，agent 手上不能没有 hash
+            # （否则只能编，或者逼用户去翻库）。默认关，避免每次检索都多 13 字节/条。
+            numbered = []
+            for i, line in enumerate(self.lines):
+                h = self.hashes[i][:8] if i < len(self.hashes) and self.hashes[i] else ""
+                numbered.append(f"{line} [h:{h}]" if h else line)
+            body = "\n".join(numbered)
+        else:
+            body = "\n".join(self.lines) if self.lines else self._why_empty()
         return head + "\n" + body
 
     def _why_empty(self) -> str:
@@ -138,16 +147,20 @@ class Retriever:
             cur = con.cursor()
             for t in terms:
                 try:
+                    # 必须挡软删：2026-11-20 降噪软删 8,295 条样板后，
+                    # 关键词兜底仍然把已删的样板捞回来（语义侧会过滤，FTS/LIKE 不会）。
                     cur.execute("SELECT m.content, m.tags, m.created_at_iso, m.content_hash, "
                                 "m.metadata FROM memory_content_fts f JOIN memories m ON m.rowid = f.rowid "
-                                "WHERE memory_content_fts MATCH ? LIMIT ?", (t, limit))
+                                "WHERE memory_content_fts MATCH ? AND m.deleted_at IS NULL LIMIT ?",
+                                (t, limit))
                     rows = cur.fetchall()
                 except sqlite3.Error:
                     rows = []
                 if not rows:  # FTS 对未分词的连续中文可能漏，LIKE 兜底
                     try:
                         cur.execute("SELECT content, tags, created_at_iso, content_hash, metadata "
-                                    "FROM memories WHERE content LIKE ? LIMIT ?", (f"%{t}%", limit))
+                                    "FROM memories WHERE content LIKE ? AND deleted_at IS NULL LIMIT ?",
+                                    (f"%{t}%", limit))
                         rows = cur.fetchall()
                     except sqlite3.Error:
                         rows = []
@@ -426,19 +439,28 @@ class Retriever:
                 # memory_embeddings 本身是 vec0 虚拟表，**不加载扩展就查不了**（no such module: vec0），
                 # 但 rowids 影子表是普通表，能直接数。
                 embedded = None
+                embedded_active = None
                 for table in ("memory_embeddings_rowids", "memory_embeddings"):
                     try:
                         embedded = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                         break
                     except sqlite3.Error:
                         continue
+                # 软删的行仍有向量（不物理删），覆盖率必须只算**有效**行，
+                # 否则降噪之后 doctor 会误报"向量覆盖掉了"（实测 21,383/30,666=69.7%）。
+                try:
+                    embedded_active = cur.execute(
+                        "SELECT COUNT(*) FROM memory_embeddings_rowids r "
+                        "JOIN memories m ON m.rowid = r.rowid WHERE m.deleted_at IS NULL").fetchone()[0]
+                except sqlite3.Error:
+                    embedded_active = None
                 try:
                     fts = cur.execute("SELECT COUNT(*) FROM memory_content_fts").fetchone()[0]
                 except sqlite3.Error:
                     fts = None
                 mtime = dt.datetime.fromtimestamp(os.path.getmtime(db)).strftime("%Y-%m-%d %H:%M")
                 out["db"] = {"path": db, "total": total, "active": active, "embedded": embedded,
-                             "fts": fts, "mtime": mtime}
+                             "embedded_active": embedded_active, "fts": fts, "mtime": mtime}
             finally:
                 con.close()
 

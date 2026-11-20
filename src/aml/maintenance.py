@@ -263,9 +263,64 @@ NOISE_PATTERNS = [
     re.compile(r"^(OK|ok|好的|收到|嗯|对|是的|可以|继续|开始|完成|谢谢)[。.!！]?$"),
 ]
 
+NOISE_KINDS = ("boilerplate", "ui_echo", "confirm", "short")
 
-def noise_candidates(cfg, limit: int = 500) -> list:
-    """找出应删的噪声条目（界面回显、纯确认语、纯符号）。"""
+
+def _noise_kind(content: str) -> str:
+    """噪声分类；空串 = 不是噪声。
+
+    为什么分类而不是一个布尔：样板（harness 自己注入）与纯确认语的风险不同，
+    前者占 25.7%，删之前要让人看得出"删的是哪一类"。
+    """
+    from . import text as textlib  # 局部导入：text 是底层模块，避免循环依赖
+    c = (content or "").strip()
+    if len(c) < 8:
+        return "short"
+    if textlib.is_boilerplate(c):
+        return "boilerplate"
+    if textlib.UI_NOISE.search(c):
+        return "ui_echo"
+    if textlib.CONFIRM_ONLY.match(c):
+        return "confirm"
+    return ""
+
+
+def noise_candidates(cfg, limit: int = 0) -> list:
+    """找出应删的噪声条目（界面回显、纯确认语、纯符号、harness 样板）。
+
+    优先直连 SQLite 全量扫：2026-11-20 实测样板有 7,632 条，
+    走 API 分页只取前 500 条会漏掉 94%。没配 db_path 才退回 API。
+    """
+    db = str(cfg.get("db_path") or "")
+    if db and os.path.isfile(db):
+        return _noise_from_db(db, limit)
+    return _noise_from_api(cfg, limit or 500)
+
+
+def _noise_from_db(db: str, limit: int = 0) -> list:
+    con = sqlite3.connect(db, timeout=30)
+    try:
+        cur = con.cursor()
+        sql = "SELECT content_hash, content, tags FROM memories WHERE deleted_at IS NULL"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        out = []
+        for content_hash, content, tags in cur.execute(sql):
+            kind = _noise_kind(content or "")
+            if not kind:
+                continue
+            try:
+                parsed = json.loads(tags or "[]")
+            except ValueError:
+                parsed = []
+            out.append({"hash": content_hash, "content": (content or "")[:60],
+                        "tags": parsed, "kind": kind})
+        return out
+    finally:
+        con.close()
+
+
+def _noise_from_api(cfg, limit: int = 500) -> list:
     client = client_for(cfg)
     page, out = 1, []
     while len(out) < limit:
@@ -278,9 +333,10 @@ def noise_candidates(cfg, limit: int = 500) -> list:
             break
         for m in items:
             content = (m.get("content") or "").strip()
-            if len(content) < 8 or any(p.search(content) for p in NOISE_PATTERNS):
+            kind = _noise_kind(content)
+            if kind:
                 out.append({"hash": m.get("content_hash"), "content": content[:60],
-                            "tags": m.get("tags") or []})
+                            "tags": m.get("tags") or [], "kind": kind})
         if not data.get("has_more"):
             break
         page += 1
@@ -293,28 +349,96 @@ def denoise(cfg, apply: bool = False) -> dict:
     需要直连数据库；没配 db_path 时只返回候选清单。
     """
     candidates = noise_candidates(cfg)
-    result = {"candidates": len(candidates), "deleted": 0, "applied": apply,
-              "sample": candidates[:10]}
+    by_kind = collections.Counter(c["kind"] for c in candidates)
+    result = {"candidates": len(candidates), "by_kind": dict(by_kind),
+              "deleted": 0, "applied": apply, "sample": candidates[:10]}
     if not apply:
-        result["hint"] = "预演。确认后加 --apply 执行软删除（可回滚：UPDATE memories SET deleted_at=NULL）"
+        result["hint"] = ("预演。确认后加 --apply 执行软删除"
+                          "（可回滚：UPDATE memories SET deleted_at=NULL）")
         return result
     db = str(cfg.get("db_path") or "")
     if not db or not os.path.isfile(db):
         result["error"] = "未配置 db_path，无法执行删除"
         return result
-    hashes = [c["hash"] for c in candidates if c.get("hash")]
+    hashes = [(c["hash"],) for c in candidates if c.get("hash")]
     con = sqlite3.connect(db, timeout=30)
     try:
         stamp = dt.datetime.now(dt.timezone.utc).timestamp()
         cur = con.cursor()
-        for h in hashes:
-            cur.execute("UPDATE memories SET deleted_at=? WHERE content_hash=? AND deleted_at IS NULL",
-                        (stamp, h))
-            result["deleted"] += cur.rowcount
+        cur.executemany(
+            "UPDATE memories SET deleted_at=? WHERE content_hash=? AND deleted_at IS NULL",
+            [(stamp, h) for (h,) in hashes])
+        result["deleted"] = cur.rowcount
         con.commit()
     finally:
         con.close()
     return result
+
+
+def why(cfg, prefix: str) -> dict:
+    """一条记忆的完整来历（`aml why <hash>`）。
+
+    为什么需要它：检索只给出"看起来相关"的一句，用户没法核对
+    "这条谁写的、什么时候、有没有被推翻、到底被用过几次"。
+    没有这个核对入口，`aml feedback` 就没有可判断的对象，质量闭环永远是空的。
+    """
+    db = str(cfg.get("db_path") or "")
+    out = {"ok": False, "hash": prefix}
+    if not db or not os.path.isfile(db):
+        out["error"] = "未配置 db_path，查不到详情"
+        return out
+    con = sqlite3.connect(db, timeout=30)
+    try:
+        row = con.execute(
+            "SELECT content_hash, content, tags, metadata, created_at_iso, deleted_at, "
+            "superseded_by, confidence FROM memories WHERE content_hash LIKE ? LIMIT 1",
+            (prefix + "%",)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        out["error"] = f"没有以 {prefix} 开头的记忆"
+        return out
+    h, content, tags, meta, created, deleted, superseded, confidence = row
+    try:
+        meta = json.loads(meta or "{}")
+    except ValueError:
+        meta = {}
+    # 后端把 tags 存成**逗号分隔的字符串**（不是 JSON 数组）——实测 2026-11-20，
+    # 直接 json.loads 会静默变成空列表，`aml why` 就显示不出领域/项目。
+    try:
+        tags = json.loads(tags or "[]")
+        if not isinstance(tags, list):
+            raise ValueError
+    except (ValueError, TypeError):
+        tags = [t.strip() for t in str(tags or "").split(",") if t.strip()]
+    out.update({"ok": True, "hash": h, "content": content or "", "tags": tags,
+                "metadata": meta, "created_at": created, "deleted": bool(deleted),
+                "superseded_by": superseded or "", "confidence": confidence})
+    out["review_after"] = meta.get("review_after") or ""
+    out["recall"] = _recall_stats(cfg, h)
+    return out
+
+
+def _recall_stats(cfg, content_hash: str) -> dict:
+    """从召回账本里数这条被注入过几次、最后一次是什么时候。"""
+    path = cfg.state_dir / "recall-log.jsonl"
+    count, last = 0, ""
+    if not path.is_file():
+        return {"count": 0, "last": ""}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if any(str(x).startswith(content_hash) or content_hash.startswith(str(x))
+                       for x in (ev.get("hashes") or [])):
+                    count += 1
+                    last = ev.get("at") or last
+    except OSError:
+        pass
+    return {"count": count, "last": last}
 
 
 def prune_export(cfg, keep_days: int = 30) -> dict:

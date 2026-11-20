@@ -5,6 +5,7 @@ CLI 只做编排，逻辑都在各模块里，方便测试与二次开发。
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import sys
 
@@ -127,7 +128,7 @@ def cmd_search(args):
     result = Retriever(cfg).search(args.query, phase=args.phase, project=args.project,
                                    tag=args.tag, n=args.n, allow_repeat=args.allow_repeat,
                                    include_procedure=args.include_procedure)
-    print(result.render())
+    print(result.render(trace=getattr(args, "trace", False)))
     if args.explain:
         print("\n诊断：" + json.dumps(result.diag, ensure_ascii=False))
     return 0 if not result.empty else 1
@@ -278,14 +279,49 @@ def cmd_review(args):
     return 0
 
 
+def cmd_why(args):
+    """一条记忆的完整来历：谁写的、什么时候、被推翻没、用过几次。"""
+    cfg = _cfg(args)
+    from . import maintenance
+    info = maintenance.why(cfg, args.hash)
+    if not info.get("ok"):
+        print(info.get("error") or "查不到这条记忆", file=sys.stderr)
+        return 1
+    if info["deleted"]:
+        state = "已软删（降噪/清理，可回滚）"
+    elif info["superseded_by"]:
+        state = f"已被取代 → {info['superseded_by'][:12]}"
+    else:
+        state = "有效"
+    meta = info["metadata"] or {}
+    print(f"h: {info['hash'][:16]}   状态: {state}")
+    print(f"时间: {info['created_at'] or '-'}   来源: "
+          f"{meta.get('source') or meta.get('src_session') or meta.get('source_agent') or '-'}")
+    domain = next((t.split(':', 1)[1] for t in info["tags"] if t.startswith('domain:')), '-')
+    project = next((t.split(':', 1)[1] for t in info["tags"] if t.startswith('project:')), '-')
+    print(f"领域: {domain}   项目: {project}")
+    review_after = info.get("review_after") or ""
+    if review_after:
+        expired = review_after < dt.date.today().isoformat()
+        print(f"复核期: {review_after}" + ("（已过期 ⚠）" if expired else ""))
+    recall = info.get("recall") or {}
+    print(f"被召回: {recall.get('count', 0)} 次" + (f"，最近 {recall['last']}" if recall.get("last") else ""))
+    print(f"标签: {','.join(info['tags'])}")
+    print("正文:")
+    print(info["content"])
+    print("\n觉得有用/没用：aml feedback --hash " + info["hash"][:12] + " --outcome worked|failed")
+    return 0
+
+
 def cmd_denoise(args):
     cfg = _cfg(args)
     from . import maintenance
     info = maintenance.denoise(cfg, apply=args.apply)
-    print(f"噪声候选 {info['candidates']} 条"
+    detail = "、".join(f"{k} {v}" for k, v in sorted((info.get("by_kind") or {}).items()))
+    print(f"噪声候选 {info['candidates']} 条" + (f"（{detail}）" if detail else "")
           + (f"，已软删除 {info['deleted']} 条" if info["applied"] else "（预演，未删除）"))
     for row in info["sample"]:
-        print(f"  {row['content'][:60]}")
+        print(f"  [{row.get('kind', '?')}] {row['content'][:60]}")
     if info.get("hint"):
         print(info["hint"])
     return 0
@@ -580,6 +616,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--include-procedure", action="store_true",
                     help="把「程序性内容」（技能正文）也纳入检索；默认跳过——它们只该显式加载")
     sp.add_argument("--explain", action="store_true", help="额外打印诊断信息")
+    sp.add_argument("--trace", action="store_true",
+                    help="逐条附 content_hash 前 8 位（回答里要写引用时用；可用 aml why 追详情）")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("ingest-kb", help="把知识库文档分块灌进记忆层（增量）")
@@ -618,6 +656,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verify", help="人工确认该 hash 仍然成立：写 last_verified_at 并顺延复核期")
     sp.add_argument("--days", type=int, default=180)
     sp.set_defaults(func=cmd_review)
+
+    sp = sub.add_parser("why", help="一条记忆的来历：来源/时间/复核期/被推翻没/用过几次")
+    sp.add_argument("hash", help="content_hash 或它的前几位")
+    sp.set_defaults(func=cmd_why)
 
     sp = sub.add_parser("feedback", help="记忆质量反馈：worked / failed / used（影响同档位排序）")
     sp.add_argument("--hash", help="记忆的 content_hash（也可以改用 --last）")

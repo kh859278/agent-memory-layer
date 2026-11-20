@@ -15,6 +15,37 @@ UI_NOISE = re.compile(
     r"|API Error: \d+|^[\s\W_]+$")
 CONFIRM_ONLY = re.compile(r"^(OK|ok|好的|收到|嗯|对|是的|可以|继续|开始|完成|谢谢)[。.!！]?$")
 
+# 会话流水里的"样板文本"：harness 自己注入的系统提示、时间戳、子 agent 通知、日程提醒。
+# 2026-11-20 实测：29,678 条有效记忆里有 7,632 条（25.7%）是这类文本；
+# 用一条 "Time sampled…" 查询就能把 P1 的 5 个位子 / 1,500 字预算全部占满。
+# 判据只认**开头**：正文中讨论这些字样（比如梳理采集规则）不该被误伤。
+BOILERPLATE_PREFIXES = (
+    "<system-reminder>",
+    "Time sampled while preparing",
+    "Current runtime context.",
+    "This snapshot supersedes earlier runtime-context snapshots.",
+    "[SCHEDULE REMINDER BATCH]",
+    "Background subagent ",
+    "Background job ",
+    "<goal_round>",
+    "<goal_complete>",
+    "<goal_blocked>",
+)
+# 偶尔不以这些字样开头、但整段就是运行时快照的（同一句话出现在正文前 200 字内）
+BOILERPLATE_MARKERS = (
+    "This snapshot supersedes earlier runtime-context snapshots.",
+)
+
+
+def is_boilerplate(value: str) -> bool:
+    """这段文本是不是 harness 自己产生的样板（不是用户/agent 的实际内容）。"""
+    c = (value or "").lstrip()
+    if not c:
+        return True
+    if c.startswith(BOILERPLATE_PREFIXES):
+        return True
+    return any(m in c[:200] for m in BOILERPLATE_MARKERS)
+
 
 def clip(text: str, n: int = 300) -> str:
     """压平空白并截断——嵌入模型有效窗口有限，超长内容对检索是负担不是帮助。"""
@@ -22,14 +53,32 @@ def clip(text: str, n: int = 300) -> str:
     return text[:n] + ("…" if len(text) > n else "")
 
 
-def keep(text: str, min_len: int = 8) -> bool:
+def keep(text: str, min_len: int = 8, *, allow_boilerplate: bool = False) -> bool:
     """这段文本值不值得入库。"""
     c = (text or "").strip()
     if len(c) < min_len:
         return False
     if UI_NOISE.search(c) or CONFIRM_ONLY.match(c):
         return False
+    if not allow_boilerplate and is_boilerplate(c):
+        return False
     return True
+
+
+# "值得记"的信号词：决策 / 约束 / 结论 / 偏好 / 命令。
+# 只在 `ingest.only_worthwhile: true` 时启用（默认关）——先剥样板、量效果，
+# 再决定要不要把"流水账只留结论"变成默认，免得一次改太多没法归因。
+_WORTH = re.compile(
+    r"结论|决定|改成|改为|以后|约定|口径|规则|必须|禁止|不要|别再|注意|坑|踩过"
+    r"|建议|优先|取舍|原因|实测|修复|根因|教训|记住|偏好")
+
+
+def is_worthwhile(text: str, min_len: int = 20) -> bool:
+    """这段内容像不像"可复用的经验"，而不只是过程流水。"""
+    c = (text or "").strip()
+    if len(c) < min_len:
+        return False
+    return bool(_WORTH.search(c))
 
 
 def iso(value) -> str:

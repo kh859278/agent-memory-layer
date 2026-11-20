@@ -54,6 +54,9 @@ def collect(cfg, only_files=None, skip_files=None, since: str | None = None) -> 
     records = []
     max_len = int(cfg.section("ingest").get("max_len", 300))
     min_len = int(cfg.section("ingest").get("min_len", 8))
+    # 默认 False：只剥"样板文本"（保真），不判断"有没有价值"（会丢内容）。
+    # 实测样板占 25.7% 之后，再决定要不要把它打开。
+    only_worthwhile = bool(cfg.section("ingest").get("only_worthwhile", False))
     for adapter in build(cfg, only_files=only_files, skip_files=skip_files):
         for path in adapter.discover():
             for turn in adapter.turns(path):
@@ -65,13 +68,15 @@ def collect(cfg, only_files=None, skip_files=None, since: str | None = None) -> 
                 meta = {"timestamp": turn.ts, "source_agent": turn.agent,
                         "session_id": turn.session, "project": turn.project,
                         "source_path": turn.path, "source": "session-import"}
-                if turn.user and text.keep(turn.user, min_len):
+                if turn.user and text.keep(turn.user, min_len) and (
+                        not only_worthwhile or text.is_worthwhile(turn.user)):
                     records.append({"content": text.clip(turn.user, max_len),
                                     "tags": tags + ["kind:task"],
                                     "metadata": dict(meta, kind="task"),
                                     "conversation_id": turn.session})
                 body = text.clip(turn.reply, max_len)
-                if body and text.keep(body, min_len):
+                if body and text.keep(body, min_len) and (
+                        not only_worthwhile or text.is_worthwhile(body)):
                     if turn.tools:
                         names = sorted(set(turn.tools))[:8]
                         body = f"{body}（用了工具：{', '.join(names)}）"[:max_len]

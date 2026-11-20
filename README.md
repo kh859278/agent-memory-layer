@@ -171,18 +171,19 @@ db_path: /path/to/mcp-memory/sqlite_vec.db   # 只有"时间回填"等直连操�
 | `aml sync` | 采集所有 agent 会话入库 + **把 created_at 回填成原始时间**（`--dry-run` 只看） |
 | `aml watch` | 常驻监听：归档即时入库、会话静默 ≥120s 后增量入库（`--seed` 只记基线） |
 | `aml distill` | 会话 → 跨项目知识（`--list` / `--session` / `--rebuild-md`） |
-| `aml search Q --phase P2` | 分阶段检索：级联回退 + 未命中解释（`--explain` 看诊断；`--include-procedure` 才返回技能正文） |
+| `aml search Q --phase P2` | 分阶段检索：级联回退 + 未命中解释（`--explain` 看诊断；`--include-procedure` 才返回技能正文；`--trace` 逐条附 hash 前 8 位，供回答里写引用） |
 | `aml ingest-kb` | 知识库文档分块灌库（`--since` 增量） |
 | `aml index rebuild` | 重建知识库索引（索引会腐化，`doctor` 会告警） |
 | `aml backup` / `aml restore` | 在线备份（按天保留）/ **从备份恢复**（默认预检，`--yes` 才写，且先自动另存现有库） |
 | `aml export OUT` | 导出成人可读 markdown（按领域分组）或原始 JSON |
 | `aml review` | 知识复核：列出过期/快到期的结论，`--postpone <hash> --days 180` 顺延，`--verify <hash>` 人工确认仍成立 |
+| `aml why <hash>` | **一条记忆的来历**：来源/时间/领域/项目/复核期/是否被取代/被召回几次 + 正文；给 `aml feedback` 一个可核对的对象 |
 | `aml feedback --hash H --outcome worked\|failed\|used` | 质量反馈：让"被召回"与"有用"分开计分，影响同档位排序（没数据的记忆不受惩罚） |
 | `aml feedback --last 1 --outcome worked` | 给**最近这次检索**注入的记忆打点（依据是召回账本，不用抄 hash；`--list` 先看、`--dry-run` 预演） |
 | `aml migrate procedure` | 存量迁移：给已灌进库的技能正文补打 `kind:procedure`（默认只预览，可回滚） |
 | `aml bench --tasks FILE` | 检索基准：memory ON/OFF 对照（入口命中率 + 平均注入字数 + **P50/P95/max**）。`--forms query,alt` 同任务换问法对照（暴露"拿知识标题当查询"的自我泄漏），并给出 **P@3 / R@3**（前 3 条里真正相关的比例） |
 | `aml bench --task-level` | **任务级基准**：真起 agent 跑同一批任务两遍（有记忆/无记忆），判成败并统计成功率、返工、耗时、token、被记忆带偏率、既有功能回退率（`--feedback` 顺手回写反馈；`--ablate 1` 加一组"藏掉前 N 条记忆"的**反事实臂**，回答"注入的记忆到底有没有被用上"；有回退/违禁则退出码非 0，可当门禁） |
-| `aml denoise` | 找出界面回显/纯确认语等噪声，`--apply` **软删除**（写 `deleted_at`，可回滚） |
+| `aml denoise` | 找出噪声并**分类**（`boilerplate` harness 样板 / `ui_echo` 界面回显 / `confirm` 纯确认语 / `short` 过短），`--apply` **软删除**（写 `deleted_at`，可回滚）。2026-11-20 本机实测：样板占 25.7%，清掉后 P1 的 1,500 字预算不再被系统提示吃满 |
 | `aml dedup` | 近义知识合并（默认只预览；`--apply` 才合并，**整簇快照可 `--rollback`**） |
 | `aml backfill-embeddings` | 补齐**缺向量**的记录（缺向量 = 语义检索永远搜不到），`--prune-orphans` 清重复孤儿 |
 | `aml mcp` | 起 MCP server（stdio JSON-RPC），把检索/写回/播报/体检暴露给任何 MCP 客户端 |

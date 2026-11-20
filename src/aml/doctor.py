@@ -49,14 +49,21 @@ def run(cfg) -> list:
     diag = retriever.diagnostics()
     db = diag.get("db")
     if db:
-        embedded = db.get("embedded")
+        embedded = db.get("embedded_active")
+        if embedded is None:
+            embedded = db.get("embedded")
+        active = db.get("active", db.get("total"))
         if embedded is None:
             checks.append(Check("向量覆盖", WARN, "查不到向量表（可能需要 sqlite-vec 扩展）",
                                 "缺失向量的记录永远搜不到：aml maintenance backfill-embeddings"))
         else:
-            coverage = (embedded / db["total"] * 100) if db["total"] else 0
+            # 分母用**有效**行：软删的行仍有向量，拿总行数当分母会在降噪后误报
+            # （2026-11-20：降噪 8,295 条后 21,383/30,666 会被读成"覆盖掉了"）。
+            coverage = (embedded / active * 100) if active else 0
             status = OK if coverage >= 99.5 else (WARN if coverage >= 90 else BAD)
-            checks.append(Check("向量覆盖", status, f"{embedded}/{db['total']}（{coverage:.1f}%）",
+            soft = (db.get("total", 0) - active)
+            extra = f"（另有 {soft} 条软删不计数）" if soft > 0 else ""
+            checks.append(Check("向量覆盖", status, f"{embedded}/{active}（{coverage:.1f}%）{extra}",
                                 "aml maintenance backfill-embeddings（缺失的记录永远搜不到）"))
         checks.append(Check("记忆条数", OK, f"库内 {db['total']}（有效 {db.get('active', db['total'])}），"
                                             f"库更新于 {db['mtime']}"))
