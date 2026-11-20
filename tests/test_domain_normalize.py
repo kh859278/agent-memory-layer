@@ -55,8 +55,8 @@ def test_write_entries_normalizes_domain_from_model(tmp_path):
         {"session_id": "session-abcdef123456", "short": "abcdef12", "agent": "dsh"},
         client=fake)
     call = fake.calls[0]
-    assert "domain:checklist-env-setup" in call["tags"]
-    assert call["metadata"]["domain"] == "checklist-env-setup"
+    assert "domain:tooling" in call["tags"]   # 词表收敛：checklist/env-setup → tooling
+    assert call["metadata"]["domain"] == "tooling"
     assert not any("/" in t for t in call["tags"])
 
 

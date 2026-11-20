@@ -25,7 +25,7 @@ class _PagedClient:
     """模拟分页端点：每页 100，共 total 条。"""
 
     def __init__(self, total):
-        self.items = [_mem("bulk", f"条{i}") for i in range(total)]
+        self.items = [_mem("tooling", f"条{i}") for i in range(total)]
 
     def iter_memories(self, tag=None, max_pages=500):
         for i in range(0, len(self.items), 100):
@@ -39,13 +39,13 @@ def test_rebuild_renders_more_than_the_old_1000_cap(tmp_path):
     cfg = cfgmod.load({"aml_home": str(tmp_path)})
     info = distill.rebuild_markdown(cfg, client=_PagedClient(1123))
     assert info["entries"] == 1123, "超过 1000 条时不能再被截断"
-    text = (cfg.knowledge_dir / "沉淀" / "bulk.md").read_text(encoding="utf-8")
+    text = (cfg.knowledge_dir / "沉淀" / "tooling.md").read_text(encoding="utf-8")
     assert "共 1123 条" in text
 
 
 class _FakeClient:
     def iter_memories(self, tag=None, max_pages=500):
-        yield _mem("keep", "保留的")
+        yield _mem("research", "保留的")
         yield {"content": "别的", "tags": ["kind:task"], "metadata": {}}   # 非知识条：要滤掉
 
     def search_by_tag(self, tags, match_all=False, n=20):   # pragma: no cover
@@ -65,7 +65,7 @@ def test_rebuild_removes_stale_generated_files_only(tmp_path):
 
     info = distill.rebuild_markdown(cfg, client=_FakeClient())
     assert info["entries"] == 1                       # 非知识条被滤掉
-    assert (sink / "keep.md").is_file()
+    assert (sink / "research.md").is_file()
     assert not (sink / "old-domain.md").exists(), "孤儿领域文件应被清掉"
     assert (sink / "AGENTS.md").is_file(), "手写文件绝不能被删"
     assert info["removed"] == ["old-domain.md"]
@@ -79,11 +79,11 @@ def test_rebuild_falls_back_when_paging_unavailable(tmp_path):
             raise RuntimeError("端点不存在")
 
         def search_by_tag(self, tags, match_all=False, n=20):
-            return [_mem("fallback", "退回路径")]
+            return [_mem("media", "退回路径")]
 
     info = distill.rebuild_markdown(cfg, client=_NoPaging())
     assert info["entries"] == 1
-    assert (cfg.knowledge_dir / "沉淀" / "fallback.md").is_file()
+    assert (cfg.knowledge_dir / "沉淀" / "media.md").is_file()
 
 
 def test_rebuild_also_removes_legacy_format_orphans(tmp_path):

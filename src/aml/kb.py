@@ -16,6 +16,7 @@ import shutil
 
 from .http import client_for
 from .redact import redact
+from .taxonomy import canon
 
 CHUNK = 280          # 嵌入模型有效窗口有限，块太大检索会糊
 OVERLAP = 40
@@ -100,13 +101,15 @@ def build_index(cfg, memories=None) -> dict:
                 projects[t.split(":", 1)[1]] += 1
         if "kind:knowledge" in tags:
             meta = m.get("metadata") or {}
-            dom = meta.get("domain") or next(
-                (t.split(":", 1)[1] for t in tags if t.startswith("domain:")), "general")
+            content = m.get("content") or ""
             title = meta.get("title")
             if not title:
-                content = m.get("content") or ""
                 title = content[1:content.find("】")] if content.startswith("【") and "】" in content else content[:24]
-            domains[dom].append(title)
+            raw = meta.get("domain") or next(
+                (t.split(":", 1)[1] for t in tags if t.startswith("domain:")), "general")
+            # 按词表归并：索引里的"领域"要和 沉淀/*.md 的文件名对得上，
+            # 否则索引列 813 个领域、目录里只有 39 个文件（2026-11-20 实测）。
+            domains[canon(raw, title, content)].append(title)
 
     lines = []
     add = lines.append

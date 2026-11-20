@@ -30,6 +30,7 @@ import urllib.request
 
 from .http import MemoryClient, client_for
 from .redact import redact
+from .taxonomy import canon
 from .text import domain_of, write_lf
 
 PROMPT = """下面是某个项目的**一段真实工作会话记录**（按时间排序，U=用户任务，A=agent 回复）。
@@ -259,7 +260,8 @@ def sink_markdown(cfg, entries, item) -> int:
     for e in entries:
         if not isinstance(e, dict) or not e.get("body"):
             continue
-        domain = (e.get("domain") or "general").strip() or "general"
+        # 词表收敛：模型自造的 domain 一律折进 ≤32 个领域（见 taxonomy.py）
+        domain = canon(e.get("domain") or "general", e.get("title", ""), e.get("body", ""))
         path = sink / f"{domain}.md"
         try:
             with open(path, "a", encoding="utf-8", newline="\n") as f:
@@ -333,7 +335,7 @@ def write_entries(cfg, entries, item, client: MemoryClient | None = None) -> int
     for e in entries:
         if not isinstance(e, dict) or not e.get("body"):
             continue
-        domain = domain_of(e.get("domain") or "general")
+        domain = canon(e.get("domain") or "general", e.get("title", ""), e.get("body", ""))
         ktype = (e.get("type") or "pattern").strip() or "pattern"
         content = f"【{e.get('title', '')}】{e['body']}"
         tags = ["kind:knowledge", "reusable:true", f"domain:{domain}", f"ktype:{ktype}",
@@ -506,12 +508,29 @@ def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
     by_domain = collections.defaultdict(list)
     for m in items:
         meta = m.get("metadata") or {}
-        domain = meta.get("domain") or next((t.split(":", 1)[1] for t in (m.get("tags") or [])
-                                             if t.startswith("domain:")), "general")
+        raw = meta.get("domain") or next((t.split(":", 1)[1] for t in (m.get("tags") or [])
+                                          if t.startswith("domain:")), "general")
+        # 重建时按词表归并：旧的 823 个 domain 折成 ≤32 个文件，
+        # 否则合并/改名后每篇都留一个孤儿文件（rebuild 只删"这次没有的领域"）。
+        domain = canon(raw, meta.get("title") or "", m.get("content") or "")
         by_domain[domain].append((meta, m))
     sink = cfg.knowledge_dir / str(cfg.section("distill").get("sink_subdir", "沉淀"))
     sink.mkdir(parents=True, exist_ok=True)
+    # 超大领域按 ktype 拆开：2,700 条知识里 agent-workflow 一家 677 条，
+    # 合成一篇 350KB 的"墙"照样没法读（2026-11-20 实测）。阈值可配。
+    split_at = int(cfg.section("distill").get("split_at_chars", 80000))
+    grouped = {}
     for domain, rows in by_domain.items():
+        total = sum(len(m.get("content") or "") for _meta, m in rows)
+        if split_at > 0 and total > split_at:
+            parts = collections.defaultdict(list)
+            for meta, m in rows:
+                parts[(meta.get("ktype") or "other")].append((meta, m))
+            for ktype, sub in parts.items():
+                grouped[f"{domain}-{ktype}"] = sub
+        else:
+            grouped[domain] = rows
+    for domain, rows in grouped.items():
         lines = [f"# 沉淀：{domain}", "",
                  f"> 由记忆层重建（{dt.datetime.now():%Y-%m-%d %H:%M}），共 {len(rows)} 条。", ""]
         for meta, m in rows:
@@ -527,7 +546,7 @@ def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
     # `AGENTS.md` 这类手写文件一概不碰。
     removed = []
     for old in sorted(sink.glob("*.md")):
-        if old.stem in by_domain:
+        if old.stem in grouped:
             continue
         if not _looks_generated(old):
             continue
@@ -536,5 +555,5 @@ def rebuild_markdown(cfg, client: MemoryClient | None = None) -> dict:
             removed.append(old.name)
         except OSError:
             pass
-    return {"domains": len(by_domain), "entries": len(items), "dir": str(sink),
+    return {"domains": len(grouped), "entries": len(items), "dir": str(sink),
             "removed": removed}

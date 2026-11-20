@@ -15,6 +15,11 @@
 | 6 | 可解释：检索带 hash | `aml search --phase P2 --trace "powershell 编码 乱码"` | 每条末尾 `[h:fefebe94]` 形式 |
 | 7 | 全量回归 | `python -m pytest -q` | 416 passed |
 | 8 | 检索基准基线 | `aml bench --tasks state/bench-tasks-kb.jsonl --forms query,alt --json` | query：命中 19/20、P@3 **0.592**、R@3 0.95、均注入 726 字；alt：命中 19/20、P@3 **0.5**、R@3 1.0、均 653 字。补清 335 条旧格式样板后复跑**同值**（稳定） |
+| 9 | 领域词表收敛 | `python -m pytest tests/test_taxonomy.py -q` | 10 passed；《沉淀》文件 805 → **39**（31 个词表领域 + 大领域按 ktype 拆分），索引里的领域数从 813 → **31** |
+| 10 | 超大领域拆分与孤儿清理 | `aml distill --rebuild-md`（重复跑应 `removed: []`） | 首跑 removeds 772 个旧文件、entries 2721；`AGENTS.md` 等手写文件未被删 |
+| 11 | 近义知识合并 | `aml dedup --sim 0.30 --title-sim 0.60 --apply` | 77/78 簇合并成功、1 失败；快照 `backups/dedup/dedup-20261120-213032.json`（可 `--rollback`） |
+| 12 | 队列归档薄会话 | 读 `state/distill_queue.json` | pending **0** / done 597（435 标 `skip:thin`、8 标 `skip:lark`） |
+| 13 | 补料后检索复测 | 同 #8，报告 `state/bench/after-distill-20261120.json` | query：命中 20/20、P@3 0.583、R@3 0.90；alt：19/20、P@3 0.517、R@3 1.0 → **补料没提升前 3 条纯度**（精度问题在排序/截断，不在知识量） |
 
 ## 基线文件与用法
 

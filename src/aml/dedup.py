@@ -138,7 +138,10 @@ def merge_cluster(cluster_mems: list, cfg, call=None) -> dict:
 def apply_cluster(cfg, cluster_mems: list, merged: dict, client: MemoryClient | None = None) -> dict:
     """写入合并条目并删除原条目。"""
     client = client or client_for(cfg)
-    domain = (merged.get("domain") or "general").strip() or "general"
+    # 合并出来的新条目也走词表：否则每轮 dedup 又给库添几个自造 domain
+    from .taxonomy import canon
+    domain = canon(merged.get("domain") or "general", merged.get("title", ""),
+                   merged.get("body", ""))
     ktype = (merged.get("type") or "pattern").strip() or "pattern"
     sessions = sorted({(m.get("metadata") or {}).get("src_session") or "-" for m in cluster_mems})
     titles = [(m.get("metadata") or {}).get("title") for m in cluster_mems]
