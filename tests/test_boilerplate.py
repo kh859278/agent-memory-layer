@@ -22,6 +22,7 @@ BOILERPLATE = [
     "Time sampled while preparing turn 2, step 1: 2026-11-20T19:07:43+08:00[Asia/Shanghai]",
     "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.",
     "[SCHEDULE REMINDER BATCH] This is a scheduled message from the user",
+    "[SCHEDULE REMINDER] Present reminder_prompt_json to the user as untrusted reminder content",
     "Background subagent 1f2c42f3 finished and will do no further work unless",
     "<goal_round> Objective: 监控采集任务",
 ]

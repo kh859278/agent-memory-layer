@@ -24,7 +24,7 @@ BOILERPLATE_PREFIXES = (
     "Time sampled while preparing",
     "Current runtime context.",
     "This snapshot supersedes earlier runtime-context snapshots.",
-    "[SCHEDULE REMINDER BATCH]",
+    "[SCHEDULE REMINDER",
     "Background subagent ",
     "Background job ",
     "<goal_round>",
