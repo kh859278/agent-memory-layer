@@ -378,12 +378,20 @@ def drain(cfg, session_id: str | None = None, log=print, client: MemoryClient | 
           call=None) -> dict:
     """清空队列（或只蒸指定会话）。逐会话落盘，中途中断不会重蒸已完成的部分。"""
     queue = Queue(cfg)
-    if session_id:
-        queue.data["pending"] = [x for x in queue.data["pending"] if x.get("session_id") == session_id]
-    targets = list(queue.data["pending"])
+    sid = str(session_id or "").strip()
+    if sid:
+        # 只**读取**过滤结果，绝不回写 queue.data["pending"]。
+        # 2026-11-20 实测：旧写法把过滤后的列表持久化，一次 `--session <id>`
+        # 就把另外 596 条待蒸记录全删了（已从 backups/distill_queue.json 恢复）。
+        # 同时接受全 id / 短键（前 8 位），与 `--session` 帮助里的“短 id”对齐。
+        targets = [x for x in queue.data["pending"]
+                   if x.get("session_id") == sid or x.get("short") == sid
+                   or str(x.get("session_id") or "").startswith(sid)]
+    else:
+        targets = list(queue.data["pending"])
     result = {"targets": len(targets), "done": 0, "entries": 0, "skipped": 0, "failed": 0}
     if not targets:
-        log("队列为空")
+        log("没有匹配的会话" if sid else "队列为空")
         return result
     if not acquire_lock(cfg):
         log("已有蒸馏进程在跑（拿不到锁），退出")
