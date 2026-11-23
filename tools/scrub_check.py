@@ -167,7 +167,12 @@ def scan_file(path: str, blocklist: list, encodings: dict | None = None) -> list
     交给调用方汇总打印（这样人能看到"这次是按哪种写法读的"，而不是默认一切正常）。
     """
     ext = os.path.splitext(path)[1].lower()
-    rel = os.path.relpath(path, ROOT)
+    # Windows CI 上仓库在 D:、pytest 临时目录在 C:，跨盘符 relpath 会抛 ValueError
+    # （2026-11-23 从 CI annotation 定位：本地全在 C: 所以一直没复现）。
+    try:
+        rel = os.path.relpath(path, ROOT)
+    except ValueError:
+        rel = path
     if ext in DB_EXT:
         return [(rel, 0, "二进制数据库", f"{os.path.getsize(path)} 字节 —— 不该进仓库")]
     try:

@@ -126,6 +126,28 @@ def test_scanner_reads_non_utf8_files(tmp_path):
     assert [h for h in scrub.scan_file(str(gbk), ["ACME"]) if h[2] == "屏蔽词"]
 
 
+def test_scanner_survives_relpath_across_drives(tmp_path, monkeypatch):
+    """Windows CI 实测：仓库在 D:、tmp 在 C:，relpath 跨盘符抛 ValueError。
+
+    扫描器不能因为"算不出相对路径"就崩掉——那等于让文件隐身。
+    """
+    scrub = _load_scrub()
+    f = tmp_path / "dump.txt"
+    f.write_bytes((f"路径 {FAKE_WIN} 结束\n").encode())
+
+    real = scrub.os.path.relpath
+
+    def boom(*a, **k):
+        raise ValueError("path is on mount 'C:', start on mount 'D:'")
+
+    monkeypatch.setattr(scrub.os.path, "relpath", boom)
+    try:
+        hits = scrub.scan_file(str(f), [])
+        assert hits, "跨盘符时仍然要能扫到内容"
+    finally:
+        monkeypatch.setattr(scrub.os.path, "relpath", real)
+
+
 # ------------------------------------------------------------------ 脱敏
 
 def test_redact_masks_secrets_and_keeps_the_rest():

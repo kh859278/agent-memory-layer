@@ -16,10 +16,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 是最低支持版本，必须跑：3.10+ 才有的 API（例如 Path.write_text(newline=)）
-        # 在本地 3.12 上永远看不出来，只有这里会红。
+        # 3.9 是最低支持版本，但新版 runner 已经不再提供 3.9 的 setup-python 构建
+        # （2026-11-23 实测 ubuntu-latest / macos-latest 都卡在 setup-python）。
+        # 所以 3.9 改由下面 `py39` 作业用官方 python:3.9-slim 容器跑，不依赖 runner。
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.9", "3.12"]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -63,13 +64,13 @@ jobs:
       - name: Content leak scan
         run: python tools/scrub_check.py
 
-  py39-compat:
-    # 静态兜底：拿 3.9 编译一遍源码，抓"本地 3.12 看不出来"的语法/API 误用
+  py39:
+    # 3.9 兼容：用官方镜像跑，绕开"新版 runner 没有 3.9"的问题（2026-11-23 修）。
+    # 3.10+ 才有的 API（例如 Path.write_text(newline=)）只有在真 3.9 上才暴露。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.9"
-      - name: Compile all sources under 3.9
-        run: python -m compileall -q src tools
+      - name: Tests under Python 3.9 (container)
+        run: |
+          docker run --rm -v "$PWD":/w -w /w python:3.9-slim \
+            sh -c "python -m pip install -q --upgrade pip && pip install -q -e '.[dev]' zstandard && pytest -q --tb=short"
