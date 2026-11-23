@@ -194,7 +194,9 @@ def test_uninstall_backs_up_then_removes(tmp_path):
     for root in (a, b):
         make_skill(str(root), "x", body="要删的正文")
     report = install.uninstall(cfg, ["x", "ghost"], log=lambda *_: None)
-    assert sorted(report["removed"]) == ["x@a", "x@b"] and report["missing"] == ["ghost"]
+    # 断言带上 report：Windows CI 上偶发失败，只报"哪一行"看不见实际差异（2026-11-23）
+    assert sorted(report["removed"]) == ["x@a", "x@b"], report
+    assert report["missing"] == ["ghost"], report
     assert not (a / "x").exists() and not (b / "x").exists()
     backups = [p for p in (cfg.state_dir / "patrol" / "_backup").iterdir()
                if p.name.startswith("x-")]
